@@ -1,0 +1,52 @@
+services:
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "5178:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+    networks:
+      - manus-network
+    environment:
+      - BACKEND_URL=http://backend:8000
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    depends_on:
+      - sandbox
+    restart: unless-stopped
+    ports: 
+      - "8000:8000"
+    volumes:
+      - ./backend:/app          # 后端代码挂载
+      - ./docker.env:/app/.env # 环境变量文件挂载
+      - ./backend/data:/app/data  # 数据库文件挂载
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - manus-network
+      - searxng
+    command: >
+        sh -c "pip install -r requirements.txt && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+
+  sandbox:
+    image: ghcr.io/betterandbetterii/manus-sandbox:latest
+#    build:
+#       context: ./sandbox
+#       dockerfile: Dockerfile
+    command: /bin/sh -c "exit 0"  # prevent sandbox from starting, ensure image is pulled
+    restart: "no"
+    networks:
+      - manus-network
+      - searxng
+
+networks:
+  manus-network:
+    name: manus-network
+    driver: bridge
+  searxng:
+    external: true
