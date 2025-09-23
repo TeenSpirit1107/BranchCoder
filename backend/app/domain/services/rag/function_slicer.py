@@ -1,568 +1,406 @@
 from __future__ import annotations
 
-from pathlib import Path
 import ast
+import json
 import os
-import tokenize
-from typing import Dict, Iterable, List, Optional, Set, Tuple
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple, Set
+
 from pydantic import BaseModel, Field
 
-# ==========================================================
-#                         Models
-# ==========================================================
 
-class FunctionSlice(BaseModel):
-    """单个函数/方法的切片 + 调用信息。
-    在 `extract_function_slices` 阶段，``calls`` 为原始检测到的调用字符串；
-    在 workspace 规范化阶段，会写回为“可解析的规范化 qualname”（首段为模块名）。
-    """
-    name: str
-    qualname: str
-    source: str
-    calls: List[str] = Field(default_factory=list)  # 原始/规范化后的同名字段
-    called_by: List[str] = Field(default_factory=list)  # workspace 阶段回填
-
+# ---------------------------
+# Pydantic v2 Models
+# ---------------------------
 
 class WorkspaceFunction(BaseModel):
-    file: str
-    module: str
-    name: str
+    file: str                       # 来自于哪个文件（相对路径）
+    qualname: str                   # 函数（或方法）限定名
+    source: str                     # 函数源代码
+    calls: List[str] = Field(default_factory=list)
+    called_by: List[str] = Field(default_factory=list)
+
+
+class WorkspaceResult(BaseModel):
+    items: List[WorkspaceFunction]
+    analysis_tool: str              # "pycg" | "pyan3" | "ast_fallback"
+    analysis_warnings: List[str] = Field(default_factory=list)
+
+
+# ---------------------------
+# Helpers
+# ---------------------------
+
+SKIP_DIRS = {".git", "__pycache__", ".tox", ".venv", "venv", "node_modules", ".mypy_cache", ".pytest_cache"}
+
+
+def _iter_python_files(root: Path) -> List[Path]:
+    files: List[Path] = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        # 过滤不必要的目录
+        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
+        for fn in filenames:
+            if fn.endswith(".py"):
+                files.append(Path(dirpath) / fn)
+    return files
+
+
+def _read_text(p: Path) -> str:
+    try:
+        return p.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        return p.read_text(encoding="utf-8", errors="ignore")
+
+
+# ===== AST slicing: 提取函数源码 & qualname =====
+
+@dataclass
+class _FuncDef:
+    file: Path
     qualname: str
+    lineno: int
+    end_lineno: int
     source: str
-    calls: List[str] = Field(default_factory=list)  # 规范化后的 qualname 列表（可跨文件）
-    called_by: List[str] = Field(default_factory=list)  # 规范化后的 qualname 列表（可跨文件）
 
 
-class SliceError(BaseModel):
-    """处理单个文件时产生的错误信息。"""
-    file: str
-    message: str
-    lineno: Optional[int] = None
-    colno: Optional[int] = None
+class _QualnameBuilder(ast.NodeVisitor):
+    """计算限定名：module相对路径 + （Class.）* + func。"""
+    def __init__(self, module_name: str, code: str):
+        self.stack: List[str] = []
+        self.funcs: List[_FuncDef] = []
+        self.module_name = module_name
+        self.code = code.splitlines(keepends=True)
+
+    def _push(self, name: str):
+        self.stack.append(name)
+
+    def _pop(self):
+        if self.stack:
+            self.stack.pop()
+
+    def _qual(self, leaf: str) -> str:
+        parts = [self.module_name] + self.stack + [leaf]
+        return ".".join([p for p in parts if p])
+
+    def visit_ClassDef(self, node: ast.ClassDef):
+        self._push(node.name)
+        self.generic_visit(node)
+        self._pop()
+
+    def visit_FunctionDef(self, node: ast.FunctionDef):
+        qn = self._qual(node.name)
+        src = "".join(self.code[node.lineno - 1: node.end_lineno])
+        self.funcs.append(
+            _FuncDef(
+                file=Path(self.module_name.replace(".", os.sep) + ".py"),  # 占位；外层会替换为真实相对路径
+                qualname=qn,
+                lineno=node.lineno,
+                end_lineno=node.end_lineno,
+                source=src
+            )
+        )
+        self.generic_visit(node)
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef):
+        self.visit_FunctionDef(node)  # 处理方式相同
 
 
-class WorkspaceFunctionSlices(BaseModel):
-    """工作区级别的函数切片结果与统计信息。"""
-    root: str
-    functions: List[WorkspaceFunction] = Field(default_factory=list)
-    errors: List[SliceError] = Field(default_factory=list)
-    num_files_processed: int = 0
-    num_functions: int = 0
+def _module_name_from_path(root: Path, file: Path) -> str:
+    rel = file.relative_to(root).with_suffix("")  # 去掉 .py
+    # 将路径分隔符变成包名点
+    return ".".join(rel.parts)
 
 
-# ==========================================================
-#                        Helpers
-# ==========================================================
+def _slice_functions(files: List[Path], root: Path) -> Dict[str, _FuncDef]:
+    result: Dict[str, _FuncDef] = {}
+    for f in files:
+        code = _read_text(f)
+        try:
+            tree = ast.parse(code)
+        except SyntaxError:
+            # 跳过无法解析的文件
+            continue
 
-DEFAULT_EXCLUDE_DIRS: Set[str] = {
-    ".git",
-    ".hg",
-    ".svn",
-    "__pycache__",
-    ".mypy_cache",
-    ".pytest_cache",
-    ".venv",
-    "venv",
-    "env",
-    ".idea",
-    ".vscode",
-    "node_modules",
-    "dist",
-    "build",
-    "site-packages",
-}
+        mod = _module_name_from_path(root, f)
+        qb = _QualnameBuilder(module_name=mod, code=code)
+        qb.visit(tree)
+
+        # 覆盖 _FuncDef.file 为真实相对路径
+        for fd in qb.funcs:
+            fd.file = f.relative_to(root)
+            result[fd.qualname] = fd
+    return result
 
 
-def _get_source_segment(src: str, node: ast.AST) -> str:
-    """根据 AST 节点精准切片源码，保留缩进与换行。"""
-    if hasattr(node, "lineno") and hasattr(node, "end_lineno"):
-        lines = src.splitlines(keepends=True)
-        return "".join(lines[node.lineno - 1 : node.end_lineno])
-    # 兜底：使用 ast.get_source_segment（可能丢缩进/行尾）
-    return ast.get_source_segment(src, node) or ""
+# ====== 调用图（优先用现成工具） ======
 
-
-def _dotted_name_from_node(node: ast.AST) -> Optional[str]:
+def _run_pycg(root: Path, files: List[Path]) -> Optional[Dict[str, Set[str]]]:
     """
-    尽量把被调用对象（func）还原成点分字符串：
-    - Name(id) → "foo"；Attribute(value=Name("self"), attr="bar") → "self.bar"；
-    - Attribute(value=Name("mod"), attr="func") → "mod.func"；支持嵌套。
-    其余复杂情况（如调用表达式结果）返回 None。
+    通过 'pycg' CLI 生成调用图（若系统装有它）。
+    返回 {caller -> set(callee)}，使用工具原始节点名，稍后再做名对齐。
     """
-    parts: List[str] = []
+    pycg_exe = shutil.which("pycg")
+    if not pycg_exe:
+        return None
 
-    def walk(n: ast.AST) -> bool:
-        if isinstance(n, ast.Name):
-            parts.append(n.id)
-            return True
-        if isinstance(n, ast.Attribute):
-            if walk(n.value):
-                parts.append(n.attr)
+    # pycg 常见调用方式（不同版本参数可能略有差异）：
+    #   pycg --fast --package <root_dir> --output <json>
+    #   或者
+    #   pycg --package <root_dir> -o <json>
+    # 我们尝试一种最通用的：指定 package 目录与输出文件
+    with tempfile.TemporaryDirectory() as td:
+        out_json = Path(td) / "cg.json"
+        cmd = [pycg_exe, "--package", str(root), "--output", str(out_json)]
+        # 如果 --output 不支持，用 -o 再试
+        try:
+            subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        except subprocess.CalledProcessError:
+            cmd = [pycg_exe, "--package", str(root), "-o", str(out_json)]
+            subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+        if not out_json.exists():
+            return None
+
+        data = json.loads(out_json.read_text(encoding="utf-8", errors="ignore"))
+        # data 形如 {"call_graph": {"caller": ["callee", ...], ...}}（不同版本也可能稍有不同）
+        if "call_graph" in data and isinstance(data["call_graph"], dict):
+            cg_raw = data["call_graph"]
+        else:
+            cg_raw = data  # 容错：有些版本直接就是映射
+
+        graph: Dict[str, Set[str]] = {}
+        for caller, callees in cg_raw.items():
+            if isinstance(callees, list):
+                graph.setdefault(caller, set()).update(callees)
+        return graph
+
+
+def _run_pyan3(root: Path, files: List[Path]) -> Optional[Dict[str, Set[str]]]:
+    """
+    通过 'pyan3' CLI 生成 DOT，再解析得到 {caller -> set(callee)}。
+    """
+    # pyan3 可执行文件名通常为 pyan 或 pyan3；也可用 `python -m pyan`
+    pyan_exe = shutil.which("pyan") or shutil.which("pyan3")
+    with tempfile.TemporaryDirectory() as td:
+        dot_path = Path(td) / "cg.dot"
+        file_args = [str(p) for p in files]
+
+        def try_run(cmd: List[str]) -> bool:
+            try:
+                subprocess.run(cmd, check=True, cwd=str(root), stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                 return True
-            return False
-        return False
+            except Exception:
+                return False
 
-    if walk(node):
-        return ".".join(parts)
+        ok = False
+        if pyan_exe:
+            # 使用 pyan/pyan3 CLI
+            cmd = [pyan_exe, *file_args, "--dot", "--no-defines", "--no-classes", "--use-namespace", "--colored"]
+            # 输出到 stdout；我们捕获并写入 dot_path
+            try:
+                proc = subprocess.run(cmd, check=True, cwd=str(root), stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                dot_path.write_text(proc.stdout.decode("utf-8", errors="ignore"), encoding="utf-8")
+                ok = True
+            except Exception:
+                ok = False
+
+        if not ok:
+            # 退而求其次：python -m pyan
+            cmd = [sys.executable, "-m", "pyan", *file_args, "--dot", "--no-defines", "--no-classes", "--use-namespace"]
+            if not try_run(cmd):
+                return None
+            # pyan 默认打印到 stdout
+            # 但上面 try_run 没有捕获 stdout。重新执行一遍捕获输出：
+            proc = subprocess.run(cmd, check=True, cwd=str(root), stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            dot_path.write_text(proc.stdout.decode("utf-8", errors="ignore"), encoding="utf-8")
+
+        if not dot_path.exists():
+            return None
+
+        dot = dot_path.read_text(encoding="utf-8", errors="ignore")
+        # 解析 "A" -> "B" 形式的边
+        edge_re = re.compile(r'\"(?P<src>.+?)\"\s*->\s*\"(?P<dst>.+?)\"')
+        graph: Dict[str, Set[str]] = {}
+        for m in edge_re.finditer(dot):
+            src = m.group("src")
+            dst = m.group("dst")
+            graph.setdefault(src, set()).add(dst)
+        return graph
+
+
+# ====== AST fallback calls（保底策略） ======
+
+class _CallCollector(ast.NodeVisitor):
+    def __init__(self):
+        self.calls: Set[str] = set()
+
+    def visit_Call(self, node: ast.Call):
+        # 尝试收集简单的 Name/Attribute 调用名
+        name = None
+        if isinstance(node.func, ast.Name):
+            name = node.func.id
+        elif isinstance(node.func, ast.Attribute):
+            # 收集 attr 名称（不含对象全名，作为保底）
+            name = node.func.attr
+        if name:
+            self.calls.add(name)
+        self.generic_visit(node)
+
+
+def _ast_fallback_calls(files: List[Path], root: Path, func_index: Dict[str, _FuncDef]) -> Dict[str, Set[str]]:
+    """
+    极简静态分析：对每个函数体里出现的调用，收集函数名（不含 fully-qualified）。
+    仅用作在没有 pycg / pyan3 时的保底。
+    """
+    # 建立一个从 简名 -> full qualname 的候选映射（可能多义）
+    short_map: Dict[str, Set[str]] = {}
+    for qn in func_index:
+        short = qn.split(".")[-1]
+        short_map.setdefault(short, set()).add(qn)
+
+    calls: Dict[str, Set[str]] = {}
+    for qn, fd in func_index.items():
+        code = _read_text(root / fd.file)
+        try:
+            tree = ast.parse(code)
+        except SyntaxError:
+            continue
+
+        # 找到对应函数节点的源码片段重新解析以精简范围
+        segment = "\n".join(code.splitlines()[fd.lineno - 1: fd.end_lineno])
+        try:
+            seg_tree = ast.parse(segment)
+        except SyntaxError:
+            seg_tree = tree
+
+        cc = _CallCollector()
+        cc.visit(seg_tree)
+
+        resolved: Set[str] = set()
+        for name in cc.calls:
+            # 映射到可能的 full qualnames，取并集
+            if name in short_map:
+                resolved.update(short_map[name])
+        if resolved:
+            calls[qn] = resolved
+    return calls
+
+
+# ====== 对齐外部工具节点名到我们的 qualname ======
+
+def _normalize_node_name(name: str) -> str:
+    """
+    将外部工具的节点名尽可能规整到 module.Class.func 的形式。
+    对 pycg/pyan3 节点名做宽松处理，以最大概率匹配到 _FuncDef.qualname。
+    """
+    # 常见形式举例：
+    #   pyan: package.module:Class.func 或 package.module:func
+    #   pycg: package.module.Class.func 或 函数签名携带参数
+    name = name.strip().strip('"')
+    name = name.replace(":", ".")
+    # 去掉可能的参数、返回类型等附加信息（保守）
+    name = re.sub(r"\(.*?\)$", "", name)
+    # 去掉重复的点
+    name = re.sub(r"\.+", ".", name)
+    return name
+
+
+def _align_tool_graph(tool_graph: Dict[str, Set[str]], known_qualnames: Set[str]) -> Dict[str, Set[str]]:
+    aligned: Dict[str, Set[str]] = {}
+    for raw_src, raw_dsts in tool_graph.items():
+        src = _normalize_node_name(raw_src)
+        # 找到最接近的 qualname（完全匹配或后缀匹配）
+        src_match = _best_match(src, known_qualnames)
+        if not src_match:
+            continue
+        for raw_dst in raw_dsts:
+            dst = _normalize_node_name(raw_dst)
+            dst_match = _best_match(dst, known_qualnames)
+            if dst_match:
+                aligned.setdefault(src_match, set()).add(dst_match)
+    return aligned
+
+
+def _best_match(candidate: str, pool: Set[str]) -> Optional[str]:
+    if candidate in pool:
+        return candidate
+    # 后缀匹配（module.Class.func 的后半截）
+    for q in pool:
+        if q.endswith("." + candidate) or candidate.endswith("." + q):
+            return q
+    # 最后再尝试极简的末尾函数名匹配（若唯一）
+    cand_leaf = candidate.split(".")[-1]
+    matches = [q for q in pool if q.split(".")[-1] == cand_leaf]
+    if len(matches) == 1:
+        return matches[0]
     return None
 
 
-def _iter_py_files(
-    root: Path,
-    include_globs: tuple[str, ...] = ("**/*.py",),  # 为兼容保留参数（当前实现按后缀判定）
-    exclude_dirs: Optional[Set[str]] = None,
-) -> Iterable[Path]:
-    """递归枚举 .py 文件（支持排除常见目录）。
+# ---------------------------
+# 主函数
+# ---------------------------
 
-    注：为保持行为不变，仍以文件后缀判断是否为 Python 文件；``include_globs`` 参数
-    仅为 API 兼容而保留，尚未用于过滤逻辑。
+def slice_functions_in_workspace(workspace_path: str) -> WorkspaceResult:
     """
-    _ = include_globs  # 明确占位，防止未使用告警
-    effective_excludes = exclude_dirs or DEFAULT_EXCLUDE_DIRS
-
-    for dirpath, dirnames, filenames in os.walk(root):
-        # 就地过滤以避免进入被排除目录
-        dirnames[:] = [d for d in dirnames if d not in effective_excludes and not d.startswith(".#")]
-        for name in filenames:
-            if name.endswith(".py"):
-                yield Path(dirpath) / name
-
-
-def _under_size_limit(p: Path, max_file_mb: Optional[float]) -> bool:
-    """判断文件大小是否在限制内（None 表示不限制）。"""
-    if max_file_mb is None:
-        return True
-    try:
-        size = p.stat().st_size
-    except Exception:
-        # 读取失败时不阻断后续流程，保守放行
-        return True
-    return size <= max_file_mb * 1024 * 1024
-
-
-# ---------------- Module & import utilities ----------------
-
-def _module_name_from_path(root: Path, file: Path) -> str:
-    """把文件路径转换为模块名（去掉扩展名，路径分隔符->点）。
-
-    - <root>/pkg/mod.py -> pkg.mod
-    - <root>/pkg/__init__.py -> pkg
+    遍历工作区，切出所有函数/方法源码，并生成调用关系（calls / called_by）。
+    调用关系优先使用 pycg，其次 pyan3；若都不可用，则回退到 AST 简易分析。
     """
-    rel = file.relative_to(root)
-    if rel.name == "__init__.py":
-        rel = rel.parent
+    root = Path(workspace_path).resolve()
+    if not root.exists() or not root.is_dir():
+        raise ValueError(f"Invalid workspace path: {workspace_path}")
+
+    files = _iter_python_files(root)
+    func_index = _slice_functions(files, root)   # qualname -> _FuncDef
+
+    known_qualnames = set(func_index.keys())
+
+    analysis_tool = "ast_fallback"
+    warnings: List[str] = []
+
+    # 1) pycg
+    tool_graph: Optional[Dict[str, Set[str]]] = _run_pycg(root, files)
+    if tool_graph is not None:
+        aligned = _align_tool_graph(tool_graph, known_qualnames)
+        calls_map = aligned
+        analysis_tool = "pycg"
     else:
-        rel = rel.with_suffix("")
-    parts = list(rel.parts)
-    return ".".join([p for p in parts if p]) or "<root>"
+        # 2) pyan3
+        tool_graph = _run_pyan3(root, files)
+        if tool_graph is not None:
+            aligned = _align_tool_graph(tool_graph, known_qualnames)
+            calls_map = aligned
+            analysis_tool = "pyan3"
+        else:
+            # 3) fallback
+            calls_map = _ast_fallback_calls(files, root, func_index)
+            analysis_tool = "ast_fallback"
+            warnings.append(
+                "Neither 'pycg' nor 'pyan3' was found. Falling back to a simple AST-based call extractor; "
+                "calls/called_by may be incomplete or imprecise."
+            )
 
+    # 反向边：called_by
+    called_by_map: Dict[str, Set[str]] = {qn: set() for qn in known_qualnames}
+    for caller, callees in calls_map.items():
+        for callee in callees:
+            called_by_map.setdefault(callee, set()).add(caller)
 
-class _ImportTable(BaseModel):
-    """记录单文件内的 import 映射。
-
-    - modules:  alias -> absolute module ("import pkg.mod as m" → m: pkg.mod)
-    - names:    alias -> (absolute module, original name) ("from pkg.mod import foo as bar" → bar: (pkg.mod, foo))
-    - levelled: 支持相对导入：会在构建时解析为绝对模块。
-    """
-
-    modules: Dict[str, str] = Field(default_factory=dict)
-    names: Dict[str, Tuple[str, str]] = Field(default_factory=dict)
-
-
-def _absolutize_from_module(cur_module: str, level: int, target: Optional[str]) -> str:
-    """将相对导入解析为绝对模块名。``cur_module`` 为当前模块，如 "pkg.sub.mod"。
-    level=1 表示 "from . import x"，level=2 表示 "from .. import x"。
-    target 可能为 None（"from . import x"），或 "a.b"。
-    """
-    if level == 0:
-        return target or ""
-    base_parts = cur_module.split(".")
-    if len(base_parts) < level:
-        # 退化：超出根则置空前缀
-        prefix = []
-    else:
-        prefix = base_parts[: -level]
-    if target:
-        prefix += target.split(".")
-    return ".".join([p for p in prefix if p])
-
-
-def _build_import_table(cur_module: str, tree: ast.AST) -> _ImportTable:
-    tbl = _ImportTable()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                mod = alias.name  # e.g. "pkg.mod"
-                asname = alias.asname or mod.split(".")[0]  # 无 as 时，绑定顶层包名
-                tbl.modules[asname] = mod
-        elif isinstance(node, ast.ImportFrom):
-            # node.module 可能为 None（from . import x），需结合 level 解析
-            abs_mod = _absolutize_from_module(cur_module, getattr(node, "level", 0) or 0, node.module)
-            for alias in node.names:
-                name = alias.name
-                asname = alias.asname or name
-                tbl.names[asname] = (abs_mod, name)
-    return tbl
-
-
-# ---------------- Collectors ----------------
-
-class _ClassCollector(ast.NodeVisitor):
-    def __init__(self, src: str, module: str):
-        self.src = src
-        self.module = module
-        self.parents: List[str] = [module]
-        self.classes: Set[str] = set()
-
-    def visit_ClassDef(self, node: ast.ClassDef) -> None:  # noqa: N802
-        qual = ".".join(self.parents + [node.name])
-        self.classes.add(qual)
-        self.parents.append(node.name)
-        self.generic_visit(node)
-        self.parents.pop()
-
-
-class _FunctionCollector(ast.NodeVisitor):
-    """仅收集函数定义（包含 async 与嵌套/类内方法），并提取 body 内的调用名（Call）。"""
-
-    def __init__(self, src: str, module: str):
-        self.src = src
-        self.module = module
-        self.parents: List[str] = [module]  # 用于构造 qualname
-        self.functions: List[FunctionSlice] = []
-
-    def _handle_func(self, node: ast.AST, is_async: bool) -> None:
-        # ``is_async`` 暂不影响行为，保留参数以示区分
-        name: str = node.name  # type: ignore[attr-defined]
-        qual = ".".join(self.parents + [name])
-        source = _get_source_segment(self.src, node)
-
-        # 提取函数体内的调用（Call）
-        calls: List[str] = []
-        seen: Set[str] = set()
-        for sub in ast.walk(node):
-            if isinstance(sub, ast.Call):
-                callee = _dotted_name_from_node(sub.func)
-                if callee and callee not in seen:
-                    seen.add(callee)
-                    calls.append(callee)
-
-        self.functions.append(
-            FunctionSlice(
-                name=name,
-                qualname=qual,
-                source=source,
-                calls=calls,
-                called_by=[],
+    items: List[WorkspaceFunction] = []
+    for qn, fd in func_index.items():
+        items.append(
+            WorkspaceFunction(
+                file=str(fd.file).replace("\\", "/"),
+                qualname=qn,
+                source=fd.source,
+                calls=sorted(list(calls_map.get(qn, set()))),
+                called_by=sorted(list(called_by_map.get(qn, set())))
             )
         )
 
-        # 递归下探（内部函数等）
-        self.parents.append(name)
-        self.generic_visit(node)
-        self.parents.pop()
-
-    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:  # noqa: N802
-        self._handle_func(node, is_async=False)
-
-    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:  # noqa: N802
-        self._handle_func(node, is_async=True)
-
-    def visit_ClassDef(self, node: ast.ClassDef) -> None:  # noqa: N802
-        self.parents.append(node.name)
-        self.generic_visit(node)
-        self.parents.pop()
-
-
-# ==========================================================
-#                        Public APIs
-# ==========================================================
-
-def extract_function_slices(py_file: str, *, module: Optional[str] = None, root: Optional[str | Path] = None) -> List[FunctionSlice]:
-    """从单个 Python 源文件提取函数切片与其中的调用（原始字符串）。
-
-    如果传入 ``root``，将据此推导 ``module``；否则 ``module`` 必须显式提供。
-    生成的 ``qualname`` 将以模块名作为首段（如 "pkg.mod.func").
-    """
-    path = Path(py_file)
-    if not path.exists() or not path.is_file():
-        raise FileNotFoundError(py_file)
-
-    # 遵循 PEP 263 编码声明稳健读取
-    with tokenize.open(str(path)) as f:
-        src = f.read()
-
-    if module is None:
-        if root is None:
-            raise ValueError("When 'module' is None, 'root' must be provided to compute it.")
-        module = _module_name_from_path(Path(root).resolve(), path.resolve())
-
-    tree = ast.parse(src, filename=str(path))
-
-    collector = _FunctionCollector(src, module)
-    collector.visit(tree)
-
-    return collector.functions
-
-
-# 需要类集合来解析 self./ClassName. —— 复用 class_slicer 的抽取接口（可选）
-try:  # 允许在没有 class_slicer 的极简环境下导入失败但仍能用 extract
-    from class_slicer import extract_class_slices  # type: ignore
-except Exception:  # pragma: no cover - 运行时兜底
-    extract_class_slices = None  # type: ignore
-
-
-# ---------------- Cross-file resolution ----------------
-
-def _resolve_callee(
-    *,
-    caller_qn: str,
-    caller_module: str,
-    raw_callee: str,
-    file_funcs: Set[str],
-    file_classes: Set[str],
-    imports: _ImportTable,
-    global_function_qns: Set[str],
-    global_class_qns: Set[str],
-) -> Optional[str]:
-    """把原始调用字符串解析为全局 qualname。
-
-    解析顺序：
-    1) self./cls. → 最近类作用域的方法
-    2) ClassName.foo / Outer.Inner.bar → 先在当前模块内解析；若失败，尝试导入的类名
-    3) 裸标识符 foo → 当前模块的函数/外层嵌套；若失败，尝试 from-import 的符号
-    4) 带点名 a.b.c → 如果首段是 import 的别名，则替换为真实模块后匹配全局函数；否则当作绝对 qualname 尝试
-    """
-
-    def _scopes_from_qualname(qualname: str) -> List[str]:
-        return qualname.split(".")
-
-    scopes = _scopes_from_qualname(caller_qn)
-    scope_chain = scopes[:-1]  # 去掉自身函数名
-
-    # 1) self./cls.
-    if raw_callee.startswith("self.") or raw_callee.startswith("cls."):
-        method = raw_callee.split(".", 1)[1]
-        # 找最近的类作用域
-        for i in range(len(scope_chain) - 1, -1, -1):
-            cand = ".".join(scope_chain[: i + 1])
-            if cand in file_classes or cand in global_class_qns:
-                target_qn = f"{cand}.{method}"
-                return target_qn if target_qn in global_function_qns else None
-        return None
-
-    # 2) ClassName.foo / Outer.Inner.bar
-    if "." in raw_callee:
-        head, tail = raw_callee.split(".", 1)
-        # 2.1: 导入的模块别名
-        if head in imports.modules:
-            mod = imports.modules[head]
-            tgt = f"{mod}.{tail}"
-            return tgt if tgt in global_function_qns else None
-        # 2.2: from-import 的类名 / 函数名
-        if head in imports.names:
-            mod, name = imports.names[head]
-            # 如果调用 head.method... 则认为 head 可能是类名
-            tgt = f"{mod}.{name}.{tail}"
-            if tgt in global_function_qns:
-                return tgt
-            # 或者 name 本身就是子模块： fall back 为模块+tail
-            alt = f"{mod}.{tail}"
-            if alt in global_function_qns:
-                return alt
-        # 2.3: 当前模块内的类/嵌套
-        # 构造相对解析：caller_module + '.' + raw_callee 的前缀部分为类，再拼尾部
-        # 例如 pkg.m.Class.meth → 直接匹配
-        local_head = f"{caller_module}.{head}"
-        if local_head in file_classes or local_head in global_class_qns:
-            tgt = f"{local_head}.{tail}"
-            return tgt if tgt in global_function_qns else None
-        # 2.4: 将 raw 视为绝对 qualname
-        abs_cand = raw_callee
-        return abs_cand if abs_cand in global_function_qns else None
-
-    # 3) 裸标识符 foo
-    # 3.1 顶层或外层嵌套（当前模块）
-    top_level = f"{caller_module}.{raw_callee}"
-    if top_level in global_function_qns:
-        return top_level
-    for i in range(len(scope_chain), 0, -1):
-        qual = ".".join(scope_chain[:i] + [raw_callee])
-        if qual in global_function_qns:
-            return qual
-    # 3.2 from-import 的符号
-    if raw_callee in imports.names:
-        mod, name = imports.names[raw_callee]
-        tgt = f"{mod}.{name}"
-        if tgt in global_function_qns:
-            return tgt
-    return None
-
-
-# ==========================================================
-#                    Workspace slicer (cross-file)
-# ==========================================================
-
-def slice_functions_in_workspace(
-    workspace_root: str | Path,
-    *,
-    exclude_dirs: Optional[Set[str]] = None,
-    max_file_mb: Optional[float] = 2.0,
-) -> WorkspaceFunctionSlices:
-    """对整个 workspace 进行“函数视角”的切片与整合（支持跨文件解析）。
-    步骤：
-    - 逐文件提取函数/类切片、import 表
-    - 规范化 calls（解析为全局 qualname，跨文件）
-    - 回填 called_by（跨文件）
-    - 扁平化为 WorkspaceFunction 列表
-    """
-    root = Path(workspace_root).resolve()
-
-    errors: List[SliceError] = []
-    processed = 0
-
-    # -------- 第一遍扫描：收集每个文件的 module、函数/类、imports --------
-    per_file_functions: Dict[str, List[FunctionSlice]] = {}
-    per_file_classes: Dict[str, Set[str]] = {}
-    per_file_imports: Dict[str, _ImportTable] = {}
-    module_by_file: Dict[str, str] = {}
-
-    # 全局索引
-    global_function_qns: Set[str] = set()
-    global_class_qns: Set[str] = set()
-
-    for py_file in _iter_py_files(root, exclude_dirs=exclude_dirs):
-        if not _under_size_limit(py_file, max_file_mb):
-            errors.append(
-                SliceError(
-                    file=str(py_file),
-                    message=f"Skipped: file too large (> {max_file_mb} MB)",
-                )
-            )
-            continue
-
-        try:
-            with tokenize.open(str(py_file)) as f:
-                src = f.read()
-            module = _module_name_from_path(root, py_file)
-            tree = ast.parse(src, filename=str(py_file))
-            module_by_file[str(py_file)] = module
-
-            # classes
-            class_qns: Set[str] = set()
-            if extract_class_slices is not None:
-                try:
-                    class_qns = {c.qualname if c.qualname.startswith(module) else f"{module}.{c.qualname}" for c in extract_class_slices(str(py_file))}
-                except Exception:
-                    class_qns = set()
-            # 自己收集（兜底/补充）
-            cc = _ClassCollector(src, module)
-            cc.visit(tree)
-            class_qns |= cc.classes
-            per_file_classes[str(py_file)] = class_qns
-            global_class_qns |= class_qns
-
-            # functions
-            fc = _FunctionCollector(src, module)
-            fc.visit(tree)
-            func_slices = fc.functions
-            per_file_functions[str(py_file)] = func_slices
-            for fn in func_slices:
-                global_function_qns.add(fn.qualname)
-
-            # imports
-            per_file_imports[str(py_file)] = _build_import_table(module, tree)
-
-            processed += 1
-
-        except SyntaxError as e:
-            errors.append(
-                SliceError(
-                    file=str(py_file),
-                    message=f"SyntaxError: {e.msg}",
-                    lineno=getattr(e, "lineno", None),
-                    colno=getattr(e, "offset", None),
-                )
-            )
-        except UnicodeDecodeError as e:
-            errors.append(SliceError(file=str(py_file), message=f"UnicodeDecodeError: {e.reason}"))
-        except Exception as e:  # noqa: BLE001
-            errors.append(
-                SliceError(
-                    file=str(py_file),
-                    message=f"UnhandledError: {e.__class__.__name__}: {e}",
-                )
-            )
-
-    # -------- 第二遍：解析 calls → 全局 qualname；回填 called_by --------
-    # 用于回填的全局索引（qualname -> FunctionSlice）
-    index: Dict[str, FunctionSlice] = {}
-    for file, fns in per_file_functions.items():
-        for fn in fns:
-            index[fn.qualname] = fn
-
-    # 先清空 called_by
-    for fn in index.values():
-        fn.called_by = []
-
-    for file, fns in per_file_functions.items():
-        module = module_by_file[file]
-        file_funcs = {fn.qualname for fn in fns}
-        file_classes = per_file_classes.get(file, set())
-        imports = per_file_imports[file]
-
-        for fn in fns:
-            normalized: List[str] = []
-            seen: Set[str] = set()
-            for raw in fn.calls:
-                tgt = _resolve_callee(
-                    caller_qn=fn.qualname,
-                    caller_module=module,
-                    raw_callee=raw,
-                    file_funcs=file_funcs,
-                    file_classes=file_classes,
-                    imports=imports,
-                    global_function_qns=global_function_qns,
-                    global_class_qns=global_class_qns,
-                )
-                if tgt and tgt not in seen:
-                    seen.add(tgt)
-                    normalized.append(tgt)
-            fn.calls = normalized
-
-    # 回填 called_by
-    for fn in index.values():
-        fn.called_by = []
-    for fn in index.values():
-        caller_qn = fn.qualname
-        for callee_qn in fn.calls:
-            callee_fn = index.get(callee_qn)
-            if callee_fn and caller_qn not in callee_fn.called_by:
-                callee_fn.called_by.append(caller_qn)
-
-    # -------- 扁平化输出 --------
-    flat_functions: List[WorkspaceFunction] = []
-    num_functions = 0
-    for file, fns in per_file_functions.items():
-        module = module_by_file[file]
-        for fn in fns:
-            flat_functions.append(
-                WorkspaceFunction(
-                    file=file,
-                    module=module,
-                    name=fn.name,
-                    qualname=fn.qualname,
-                    source=fn.source,
-                    calls=list(fn.calls),
-                    called_by=list(fn.called_by),
-                )
-            )
-            num_functions += 1
-
-    return WorkspaceFunctionSlices(
-        root=str(root),
-        functions=flat_functions,
-        errors=errors,
-        num_files_processed=processed,
-        num_functions=num_functions,
-    )
+    return WorkspaceResult(items=items, analysis_tool=analysis_tool, analysis_warnings=warnings)
