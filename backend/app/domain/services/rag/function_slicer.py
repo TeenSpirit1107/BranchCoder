@@ -1,16 +1,11 @@
 from __future__ import annotations
 
 import ast
-import json
 import os
 import re
-import shutil
-import subprocess
-import sys
-import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Set
+from typing import Dict, List, Optional, Set
 
 from pydantic import BaseModel, Field
 
@@ -29,8 +24,6 @@ class WorkspaceFunction(BaseModel):
 
 class WorkspaceResult(BaseModel):
     items: List[WorkspaceFunction]
-    analysis_tool: str              # "pycg" | "pyan3" | "ast_fallback"
-    analysis_warnings: List[str] = Field(default_factory=list)
 
 
 # ---------------------------
@@ -139,100 +132,6 @@ def _slice_functions(files: List[Path], root: Path) -> Dict[str, _FuncDef]:
 
 
 # ====== 调用图（优先用现成工具） ======
-
-def _run_pycg(root: Path, files: List[Path]) -> Optional[Dict[str, Set[str]]]:
-    """
-    通过 'pycg' CLI 生成调用图（若系统装有它）。
-    返回 {caller -> set(callee)}，使用工具原始节点名，稍后再做名对齐。
-    """
-    pycg_exe = shutil.which("pycg")
-    if not pycg_exe:
-        return None
-
-    # pycg 常见调用方式（不同版本参数可能略有差异）：
-    #   pycg --fast --package <root_dir> --output <json>
-    #   或者
-    #   pycg --package <root_dir> -o <json>
-    # 我们尝试一种最通用的：指定 package 目录与输出文件
-    with tempfile.TemporaryDirectory() as td:
-        out_json = Path(td) / "cg.json"
-        cmd = [pycg_exe, "--package", str(root), "--output", str(out_json)]
-        # 如果 --output 不支持，用 -o 再试
-        try:
-            subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        except subprocess.CalledProcessError:
-            cmd = [pycg_exe, "--package", str(root), "-o", str(out_json)]
-            subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-
-        if not out_json.exists():
-            return None
-
-        data = json.loads(out_json.read_text(encoding="utf-8", errors="ignore"))
-        # data 形如 {"call_graph": {"caller": ["callee", ...], ...}}（不同版本也可能稍有不同）
-        if "call_graph" in data and isinstance(data["call_graph"], dict):
-            cg_raw = data["call_graph"]
-        else:
-            cg_raw = data  # 容错：有些版本直接就是映射
-
-        graph: Dict[str, Set[str]] = {}
-        for caller, callees in cg_raw.items():
-            if isinstance(callees, list):
-                graph.setdefault(caller, set()).update(callees)
-        return graph
-
-
-def _run_pyan3(root: Path, files: List[Path]) -> Optional[Dict[str, Set[str]]]:
-    """
-    通过 'pyan3' CLI 生成 DOT，再解析得到 {caller -> set(callee)}。
-    """
-    # pyan3 可执行文件名通常为 pyan 或 pyan3；也可用 `python -m pyan`
-    pyan_exe = shutil.which("pyan") or shutil.which("pyan3")
-    with tempfile.TemporaryDirectory() as td:
-        dot_path = Path(td) / "cg.dot"
-        file_args = [str(p) for p in files]
-
-        def try_run(cmd: List[str]) -> bool:
-            try:
-                subprocess.run(cmd, check=True, cwd=str(root), stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                return True
-            except Exception:
-                return False
-
-        ok = False
-        if pyan_exe:
-            # 使用 pyan/pyan3 CLI
-            cmd = [pyan_exe, *file_args, "--dot", "--no-defines", "--no-classes", "--use-namespace", "--colored"]
-            # 输出到 stdout；我们捕获并写入 dot_path
-            try:
-                proc = subprocess.run(cmd, check=True, cwd=str(root), stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                dot_path.write_text(proc.stdout.decode("utf-8", errors="ignore"), encoding="utf-8")
-                ok = True
-            except Exception:
-                ok = False
-
-        if not ok:
-            # 退而求其次：python -m pyan
-            cmd = [sys.executable, "-m", "pyan", *file_args, "--dot", "--no-defines", "--no-classes", "--use-namespace"]
-            if not try_run(cmd):
-                return None
-            # pyan 默认打印到 stdout
-            # 但上面 try_run 没有捕获 stdout。重新执行一遍捕获输出：
-            proc = subprocess.run(cmd, check=True, cwd=str(root), stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            dot_path.write_text(proc.stdout.decode("utf-8", errors="ignore"), encoding="utf-8")
-
-        if not dot_path.exists():
-            return None
-
-        dot = dot_path.read_text(encoding="utf-8", errors="ignore")
-        # 解析 "A" -> "B" 形式的边
-        edge_re = re.compile(r'\"(?P<src>.+?)\"\s*->\s*\"(?P<dst>.+?)\"')
-        graph: Dict[str, Set[str]] = {}
-        for m in edge_re.finditer(dot):
-            src = m.group("src")
-            dst = m.group("dst")
-            graph.setdefault(src, set()).add(dst)
-        return graph
-
 
 # ====== AST fallback calls（保底策略） ======
 
@@ -360,30 +259,7 @@ def slice_functions_in_workspace(workspace_path: str) -> WorkspaceResult:
 
     known_qualnames = set(func_index.keys())
 
-    analysis_tool = "ast_fallback"
-    warnings: List[str] = []
-
-    # 1) pycg
-    tool_graph: Optional[Dict[str, Set[str]]] = _run_pycg(root, files)
-    if tool_graph is not None:
-        aligned = _align_tool_graph(tool_graph, known_qualnames)
-        calls_map = aligned
-        analysis_tool = "pycg"
-    else:
-        # 2) pyan3
-        tool_graph = _run_pyan3(root, files)
-        if tool_graph is not None:
-            aligned = _align_tool_graph(tool_graph, known_qualnames)
-            calls_map = aligned
-            analysis_tool = "pyan3"
-        else:
-            # 3) fallback
-            calls_map = _ast_fallback_calls(files, root, func_index)
-            analysis_tool = "ast_fallback"
-            warnings.append(
-                "Neither 'pycg' nor 'pyan3' was found. Falling back to a simple AST-based call extractor; "
-                "calls/called_by may be incomplete or imprecise."
-            )
+    calls_map = _ast_fallback_calls(files, root, func_index)
 
     # 反向边：called_by
     called_by_map: Dict[str, Set[str]] = {qn: set() for qn in known_qualnames}
@@ -403,4 +279,4 @@ def slice_functions_in_workspace(workspace_path: str) -> WorkspaceResult:
             )
         )
 
-    return WorkspaceResult(items=items, analysis_tool=analysis_tool, analysis_warnings=warnings)
+    return WorkspaceResult(items=items)
