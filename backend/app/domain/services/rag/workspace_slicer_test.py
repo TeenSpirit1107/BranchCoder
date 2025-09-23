@@ -8,8 +8,8 @@ if __name__ == "__main__":
     print(res.model_dump_json(indent=2))
 
     # 也可以更友好地看一眼统计
-    print("\n=== STATS ===")
-    print("root:", res.root)
-    print("processed files:", res.num_files_processed)
-    print("functions:", res.num_functions, "classes:", res.num_classes)
-    print("errors:", len(res.errors))
+    # print("\n=== STATS ===")
+    # print("root:", res.root)
+    # print("processed files:", res.num_files_processed)
+    # print("functions:", res.num_functions, "classes:", res.num_classes)
+    # print("errors:", len(res.errors))

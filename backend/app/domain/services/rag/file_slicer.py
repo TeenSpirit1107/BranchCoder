@@ -1,4 +1,4 @@
-# rag.py
+# file_slicer.py
 from __future__ import annotations
 
 import ast
@@ -18,7 +18,8 @@ class FunctionSlice(BaseModel):
     name: str
     qualname: str
     source: str
-    calls: List[str] = Field(default_factory=list)  # 该函数体内调用到的函数/方法名（去重、按出现顺序）
+    calls: List[str] = Field(default_factory=list)       # 原始检测到的调用字符串（稍后在 workspace 里规范化）
+    called_by: List[str] = Field(default_factory=list)   # 反向调用（由 workspace_slicer 补全）
 
 
 class ClassSlice(BaseModel):
@@ -68,7 +69,6 @@ def _dotted_name_from_node(node: ast.AST) -> Optional[str]:
                 parts.append(n.attr)
                 return True
             return False
-        # 对于 Subscript / Call / Lambda 等复杂情况，这里不强行解析
         return False
 
     if walk(node):
@@ -136,6 +136,7 @@ class _Collector(ast.NodeVisitor):
             qualname=qual,
             source=source,
             calls=calls,
+            called_by=[],
         )
         self.functions.append(fn_slice)
 
@@ -159,7 +160,7 @@ def extract_slices(py_file: str) -> FileSlices:
     """
     输入：Python 文件路径
     输出：FileSlices(BaseModel)
-      - functions: 每个元素是 FunctionSlice(name, qualname, source, calls)
+      - functions: 每个元素是 FunctionSlice(name, qualname, source, calls, called_by=[])
       - classes:   每个元素是 ClassSlice(name, qualname, source, methods)
     """
     path = Path(py_file)
