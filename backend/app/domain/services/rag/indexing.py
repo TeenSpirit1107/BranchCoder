@@ -209,3 +209,62 @@ class TripleRAG:
         _do_search(self.func_index, "function")
         _do_search(self.class_index, "class")
         return out
+
+
+class RAGService:
+    """
+    高层封装：负责加载 `describe_output.json`、构建索引，并提供函数式的查询接口。
+
+    用法示例：
+    
+    service = RAGService(enable_rerank=True)
+    service.load_from_json("/abs/path/to/describe_output.json")
+    results = service.retrieve("如何调用XXX函数?", top_k=5)
+    """
+
+    def __init__(
+        self,
+        embed_model_name: str = DEFAULT_EMBED_MODEL,
+        llm_model_for_rerank: str = DEFAULT_LLM_MODEL_FOR_RERANK,
+        enable_rerank: bool = False,
+        rerank_top_n: int = 5,
+        initial_candidates: int = 20,
+    ) -> None:
+        # 组合底层 TripleRAG
+        self._rag = TripleRAG(
+            embed_model_name=embed_model_name,
+            llm_model_for_rerank=llm_model_for_rerank,
+            enable_rerank=enable_rerank,
+            rerank_top_n=rerank_top_n,
+            initial_candidates=initial_candidates,
+        )
+
+    def load_from_json(self, json_path: str) -> RAGBuildReport:
+        """加载 describe_output.json 并构建三个索引。"""
+        return self._rag.build_from_json(json_path)
+
+    def load_from_dict(self, data: Dict[str, Any]) -> RAGBuildReport:
+        """支持直接从内存字典构建。"""
+        return self._rag.build_from_dict(data)
+
+    def retrieve(self, query: str, top_k: int = 5) -> Dict[str, List[Dict[str, Any]]]:
+        """对已构建的索引执行查询，返回 file/function/class 三类结果。"""
+        return self._rag.retrieve(query, top_k=top_k)
+
+    @staticmethod
+    def pretty_print(results: Dict[str, Any]) -> None:
+        """简易打印工具，便于调试。"""
+        for kind in ("file", "function", "class"):
+            rows = results.get(kind, [])
+            print(f"\n=== {kind.upper()} (top {len(rows)}) ===")
+            for i, r in enumerate(rows, 1):
+                md = r.get("metadata", {})
+                if kind == "file":
+                    label = md.get("file", "")
+                elif kind == "function":
+                    label = f"{md.get('qualname','')}  [{md.get('file','')}]"
+                else:
+                    label = f"{md.get('name','')} ({md.get('qualname','')})  [{md.get('file','')}]"
+                text = (r.get("text") or "").replace("\n", " ")
+                print(f"{i}. score={r.get('score',0.0):.4f} | {label}")
+                print(f"   {text[:240]}")
