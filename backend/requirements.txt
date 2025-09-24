@@ -21,3 +21,4 @@ sqlalchemy>=2.0.0
 aiosqlite
 alembic
 effimemo
+llama_index
