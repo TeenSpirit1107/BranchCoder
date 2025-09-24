@@ -356,7 +356,7 @@ class AgentDomainService:
                                     logger.warning(f"Failed to broadcast event for agent {agent_id}: {str(broadcast_error)}")
 
                             # 更新context
-                            self.agent_context_repository.update_context(runtime_context.domain_context)
+                            await self.agent_context_repository.update_context(runtime_context.domain_context)
 
                             # 如果消息队列不为空，优先处理下一条消息
                             if not runtime_context.msg_queue.empty():
