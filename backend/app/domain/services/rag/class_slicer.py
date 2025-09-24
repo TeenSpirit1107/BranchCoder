@@ -52,7 +52,6 @@ DEFAULT_EXCLUDE_DIRS: Set[str] = {
 
 def _iter_py_files(
     root: Path,
-    include_globs: tuple[str, ...] = ("**/*.py",),
     exclude_dirs: Optional[Set[str]] = None,
 ):
     """递归枚举 .py 文件（支持排除常见目录）。"""

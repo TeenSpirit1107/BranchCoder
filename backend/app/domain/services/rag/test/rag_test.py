@@ -2,7 +2,7 @@
 import argparse
 from typing import Any, Dict
 
-from rag import TripleRAG, DEFAULT_LLM_MODEL_FOR_RERANK, DEFAULT_EMBED_MODEL
+from ..indexing import TripleRAG, DEFAULT_LLM_MODEL_FOR_RERANK, DEFAULT_EMBED_MODEL
 
 
 def pretty_print(results: Dict[str, Any]) -> None:
