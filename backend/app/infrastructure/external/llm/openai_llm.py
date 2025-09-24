@@ -67,6 +67,40 @@ class OpenAILLM:
             logger.error(f"[DEBUG 3] 发送的消息详情: {messages}")
             raise
 
+    async def custom_ask(
+            self,
+            messages: List[Dict[str, str]],
+            tools: Optional[List[Dict[str, Any]]] = None,
+            model: Optional[str] = None,
+            temperature: Optional[float] = 0,
+    ) -> Dict[str, Any]:
+        try:
+            if tools:
+                logger.debug(f"Sending request to OpenAI with tools, model: {self.model_name}")
+                response = await self.client.chat.completions.create(
+                    model=model,
+                    temperature=temperature,
+                    max_tokens=self.max_tokens,
+                    messages=messages,
+                    tools=tools,
+                    # response_format=response_format,
+                )
+            else:
+                logger.debug(f"Sending request to OpenAI without tools, model: {self.model_name}")
+                response = await self.client.chat.completions.create(
+                    model=model,
+                    temperature=temperature,
+                    max_tokens=self.max_tokens,
+                    messages=messages,
+                    # response_format=response_format
+                )
+            logger.info(f"OpenAI response: {response}")
+            return response.choices[0].message
+        except Exception as e:
+            logger.error(f"[DEBUG 3] OpenAI API调用失败: {str(e)}")
+            logger.error(f"[DEBUG 3] 发送的消息详情: {messages}")
+            raise
+
 class OpenAIImageLLM(OpenAILLM):
     def __init__(self):
         settings = get_settings()

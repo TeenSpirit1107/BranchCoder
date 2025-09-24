@@ -19,7 +19,27 @@ class LLM(Protocol):
         Returns:
             Response message from AI service
         """
-        pass 
+        pass
+
+    async def custom_ask(
+            self,
+            messages: List[Dict[str, str]],
+            tools: Optional[List[Dict[str, Any]]] = None,
+            model: Optional[str] = None,
+            temperature: Optional[float] = 0,
+    ) -> Dict[str, Any]:
+        """Send chat request to AI service
+
+        Args:
+            messages: List of messages, including conversation history
+            tools: Optional list of tools for function calling
+            model: Optional model configuration
+            temperature: Optional temperature configuration
+
+        Returns:
+            Response message from AI service
+        """
+        pass
 
 class ImageLLM(Protocol):
     pass
