@@ -4,6 +4,7 @@ import logging
 from typing import AsyncGenerator, Optional
 from contextlib import asynccontextmanager
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker, AsyncEngine
+from sqlalchemy.pool import NullPool
 from sqlalchemy.orm import declarative_base
 
 from app.infrastructure.config import get_settings
@@ -30,14 +31,13 @@ class DatabaseManager:
         """获取数据库引擎（单例）"""
         if self._engine is None:
             settings = get_settings()
+            # Use NullPool to avoid lingering connections in environments where
+            # connections cannot be reliably checked back in by GC (threads/tasks).
+            # This mitigates SAWarning about non-checked-in connections.
             self._engine = create_async_engine(
-                settings.database_url, 
+                settings.database_url,
                 echo=False,
-                # 连接池配置
-                pool_size=10,
-                max_overflow=20,
-                pool_pre_ping=True,
-                pool_recycle=3600
+                poolclass=NullPool,
             )
             logger.info("数据库引擎已创建")
         return self._engine
