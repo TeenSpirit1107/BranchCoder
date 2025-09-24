@@ -1,22 +1,25 @@
+import logging
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from pydantic import BaseModel
 import json
+from openai import OpenAI
 
-# -----------------------------
-# Import function slice models from function_slicer
-# -----------------------------
-try:
-    from app.domain.services.rag.function_slicer import WorkspaceFunction, WorkspaceResult
-except Exception:
-    from function_slicer import WorkspaceFunction, WorkspaceResult  # type: ignore
+from function_slicer import FunctionSlice, WorkspaceFunctionSlices
+from class_slicer import ClassSlice, slice_classes_in_workspace
 
+logger = logging.getLogger(__name__)
 
 # -------------------------------------
 # New models for descriptions & outputs
 # -------------------------------------
-class DescribedWorkspaceFunction(WorkspaceFunction):
+class DescribedFunction(FunctionSlice):
     """为函数补充自然语言描述。"""
+    description: str = ""
+
+
+class DescribedClass(ClassSlice):
+    """为类补充自然语言描述。"""
     description: str = ""
 
 
@@ -26,73 +29,58 @@ class FileDescription(BaseModel):
     description: str
 
 
-class DescribedWorkspaceResult(WorkspaceResult):
+class DescribedWorkspaceFunctions(BaseModel):
     """兼容旧类型定义（不再在最终输出中使用）。"""
-    items: List[DescribedWorkspaceFunction]
-
-
-# -------------------------------------
-# Class description models
-# -------------------------------------
-try:
-    # 相对导入 class slicer（同目录下）
-    from .class_slicer import WorkspaceClass, slice_classes_in_workspace
-except Exception:
-    # 作为脚本运行时的兜底导入
-    from class_slicer import WorkspaceClass, slice_classes_in_workspace  # type: ignore
-
-
-class DescribedWorkspaceClass(WorkspaceClass):
-    description: str = ""
+    items: List[DescribedFunction]
 
 
 class DescribedWorkspaceClasses(BaseModel):
     """兼容旧类型定义（不再在最终输出中使用）。"""
-    items: List[DescribedWorkspaceClass]
+    items: List[DescribedClass]
 
 
 class DescribeOutput(BaseModel):
     """最终返回结果：
     - files: 每个文件的描述列表
-    - functions: 直接作为列表（不再嵌套 items）
-    - classes: 直接作为列表（不再嵌套 items）
+    - functions: 直接作为列表
+    - classes: 直接作为列表
     """
     files: List[FileDescription]
-    functions: List[DescribedWorkspaceFunction]
-    classes: List[DescribedWorkspaceClass]
+    functions: List[DescribedFunction]
+    classes: List[DescribedClass]
 
 
 # -----------------------------
 # Core pipeline
 # -----------------------------
 PROMPT_TEMPLATE = """
-你是资深软件工程师，请阅读以下源文件并生成两个层级的中文描述：
-1) 文件级别简介（3-6 句），概述该文件的职责、关键类型/函数、外部依赖与协作关系；
-2) 函数级别简介：对列出的每个函数写 1-2 句用途说明，聚焦输入/输出、副作用与调用关系。
-3) 类级别简介：对列出的每个类写 1-2 句用途说明，聚焦核心职责、关键方法或交互对象。
+You are a senior software engineer. Please read the following source file and generate two levels of English descriptions:
+1) File-level summary (3–6 sentences): summarize the responsibilities of the file, key types/functions, external dependencies, and collaboration relationships.
+2) Function-level summary: write 1–2 sentences for each listed function, focusing on inputs/outputs, side effects, and call relationships.
+3) Class-level summary: write 1–2 sentences for each listed class, focusing on core responsibilities, key methods, or interacting objects.
 
-务必使用固定输出格式：
+Be sure to use the fixed output format:
 [FILE]
-<文件级别简介>
+<File-level summary>
 [FUNCTIONS]
-<qualname>: <函数描述>
-<qualname>: <函数描述>
+<qualname>: <function description>
+<qualname>: <function description>
 ...
 [CLASSES]
-<qualname>: <类描述>
-<qualname>: <类描述>
+<qualname>: <class description>
+<qualname>: <class description>
 ...
 
-文件内容：
+File content:
 --- BEGIN FILE ---
 File: {file}
 {file_text}
 --- END FILE ---
 
-函数清单（qualname）：
+Function list (qualname):
 Functions:
 {functions_bulleted}
-类清单（qualname）：
+Class list (qualname):
 Classes:
 {classes_bulleted}
 """.strip()
@@ -101,8 +89,8 @@ Classes:
 def _build_prompt(
     file: str,
     file_text: str,
-    functions: List[WorkspaceFunction],
-    classes: List[WorkspaceClass],
+    functions: List[FunctionSlice],
+    classes: List[ClassSlice],
 ) -> str:
     func_bullets = "\n".join(f"- {fn.qualname}" for fn in functions) or "- <none>"
     class_bullets = "\n".join(f"- {cl.qualname}" for cl in classes) or "- <none>"
@@ -114,9 +102,9 @@ def _build_prompt(
     )
 
 
-def _group_functions_by_file(result: WorkspaceResult) -> Dict[str, List[WorkspaceFunction]]:
-    grouped: Dict[str, List[WorkspaceFunction]] = {}
-    for fn in result.items:
+def _group_functions_by_file(_result: WorkspaceFunctionSlices) -> Dict[str, List[FunctionSlice]]:
+    grouped: Dict[str, List[FunctionSlice]] = {}
+    for fn in _result.items:
         grouped.setdefault(fn.file, []).append(fn)
     return grouped
 
@@ -138,15 +126,15 @@ def parse_llm_response(raw: str) -> Tuple[str, Dict[str, str], Dict[str, str]]:
         - Strip surrounding square brackets [ ... ] if present
         - Collapse remaining extra spaces
         """
-        s = name.strip()
+        _s = name.strip()
         # remove leading dash bullets
-        if s.startswith("-"):
-            s = s.lstrip("-").strip()
+        if _s.startswith("-"):
+            _s = _s.lstrip("-").strip()
         # strip surrounding brackets like [<module>.Class]
-        if s.startswith("[") and s.endswith("]"):
-            s = s[1:-1].strip()
+        if _s.startswith("[") and _s.endswith("]"):
+            _s = _s[1:-1].strip()
         # normalize internal whitespace
-        return " ".join(s.split())
+        return " ".join(_s.split())
     for line in raw.splitlines():
         s = line.strip()
         if s == "[FILE]":
@@ -180,7 +168,7 @@ def parse_llm_response(raw: str) -> Tuple[str, Dict[str, str], Dict[str, str]]:
 
 
 def describe_workspace(
-    function_slice: WorkspaceResult,
+    function_slice: WorkspaceFunctionSlices,
     base_dir: str | Path,
     llm = None,
     output_dir: Optional[str | Path] = None,
@@ -193,11 +181,8 @@ def describe_workspace(
     5) 返回归并后的结果
     """
     base_path = Path(base_dir)
-    if output_dir is not None:
-        output_path = Path(output_dir)
-        output_path.mkdir(parents=True, exist_ok=True)
-    else:
-        output_path = None
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
 
     grouped = _group_functions_by_file(function_slice)
 
@@ -219,17 +204,19 @@ def describe_workspace(
 
     # 收集类切片并按文件分组
     classes_in_workspace = slice_classes_in_workspace(base_dir)
-    classes_by_file: Dict[str, List[WorkspaceClass]] = {}
+    classes_by_file: Dict[str, List[ClassSlice]] = {}
     for wc in classes_in_workspace.classes:
         classes_by_file.setdefault(wc.file, []).append(wc)
 
-    described_items: List[DescribedWorkspaceFunction] = []
+    # 为了在 DescribeOutput 暴露类信息，我们暂存在本地列表，函数末尾一并返回
+    described_items: List[DescribedFunction] = []
+    described_classes_acc: List[DescribedClass] = []
     file_descs: List[FileDescription] = []
 
     for rel_file, fns in grouped.items():
         abs_file = (base_path / rel_file).resolve()
         # 获取该文件对应的类切片（兼容绝对/相对路径）
-        file_classes: List[WorkspaceClass] = []
+        file_classes: List[ClassSlice] = []
         # 优先用绝对路径匹配
         file_classes.extend(classes_by_file.get(str(abs_file), []))
         # 回退用相对路径匹配
@@ -249,7 +236,8 @@ def describe_workspace(
         )
         try:
             content = resp.choices[0].message.content  # type: ignore[attr-defined]
-        except Exception:
+        except Exception as e:
+            logger.error(e)
             content = ""
         print(content)
         file_desc, fn_descs, cls_descs = parse_llm_response(content)
@@ -280,18 +268,11 @@ def describe_workspace(
         file_descs.append(fd)
 
         # 不再为每个文件写 sidecar，仅在函数末尾写聚合文件
-
         # 合并函数描述（加入全局与宽松匹配）
         for fn in fns:
             desc = fn_descs.get(fn.qualname, "")
             if not desc:
                 q_norm = _normalize_key_global(fn.qualname)
-                desc = (
-                    fn_descs.get(q_norm, "")
-                    or global_fn_desc_by_qualname.get(fn.qualname, "")
-                    or global_fn_desc_by_qualname.get(q_norm, "")
-                )
-            if not desc:
                 parts = q_norm.split(".")
                 tail2 = ".".join(parts[-2:]) if len(parts) >= 2 else ""
                 tail1 = parts[-1] if parts else ""
@@ -303,16 +284,13 @@ def describe_workspace(
                 )
 
             described_items.append(
-                DescribedWorkspaceFunction(
+                DescribedFunction(
                     **fn.model_dump(),
                     description=desc,
                 )
             )
 
         # 合并类描述（追加到统一聚合结构中，最终写入总文件）
-        # 为了在 DescribeOutput 暴露类信息，我们暂存在本地列表，函数末尾一并返回
-        if 'described_classes_acc' not in locals():
-            described_classes_acc: List[DescribedWorkspaceClass] = []
         for cl in file_classes:
             # 优先精确匹配其 qualname
             desc = cls_descs.get(cl.qualname, "")
@@ -332,34 +310,31 @@ def describe_workspace(
                     or global_cls_desc_by_name.get(simple, "")
                 )
 
-            described_class = DescribedWorkspaceClass(
+            described_class = DescribedClass(
                 **cl.model_dump(),
                 description=desc,
             )
             described_classes_acc.append(described_class)
 
     # 直接构造最终结果，functions 与 classes 为列表
-    result = DescribeOutput(
+    final_result = DescribeOutput(
         files=file_descs,
         functions=described_items,
-        classes=locals().get('described_classes_acc', []),
+        classes=described_classes_acc,
     )
 
-    # 将完整的 DescribeOutput 落盘（如果指定了 output_dir）
-    if output_path is not None:
-        aggregate_file = output_path / "describe_output.json"
-        # 确保文件存在（若不存在则创建），并确保父目录就绪
-        aggregate_file.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            aggregate_file.touch(exist_ok=True)
-        except Exception:
-            pass
-        aggregate_file.write_text(
-            json.dumps(result.model_dump(), ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+    aggregate_file = Path("describe_output.json")
 
-    return result
+    # 确保父目录存在
+    aggregate_file.parent.mkdir(parents=True, exist_ok=True)
+
+    # 写入 JSON 文件
+    aggregate_file.write_text(
+        json.dumps(final_result.model_dump(), ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    return final_result
 
 
 # -----------------------------
@@ -373,7 +348,7 @@ if __name__ == "__main__":
     WorkspaceResult = slice_functions_in_workspace(workspace_dir)
 
     # 选择一个 LLM 实现
-    from openai import OpenAI
+
     llm = OpenAI(api_key='sk-8L8llDs3K8DZ7FOv00527a79Af714904A7D8C06a7e389d46',base_url='https://api.shubiaobiao.cn/v1')
     result = describe_workspace(
         function_slice=WorkspaceResult,
