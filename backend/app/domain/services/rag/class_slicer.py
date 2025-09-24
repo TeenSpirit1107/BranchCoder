@@ -1,26 +1,14 @@
-from __future__ import annotations
-
 import ast
+import logging
 import os
 import tokenize
 from pathlib import Path
-from typing import Iterable, List, Optional, Set
-
+from typing import List, Optional, Set
 from pydantic import BaseModel, Field
 
-# ==========================================================
-#                         Models
-# ==========================================================
+logger = logging.getLogger(__name__)
 
-class ClassSlice(BaseModel):
-    """单个类的切片 + 类内方法列表"""
-    name: str
-    qualname: str
-    source: str
-    methods: List[str] = Field(default_factory=list)  # 仅直系方法（qualname）
-
-
-class WorkspaceClass(BaseModel):
+class FileClassSlice(BaseModel):
     file: str
     name: str
     qualname: str
@@ -29,7 +17,7 @@ class WorkspaceClass(BaseModel):
 
 
 class WorkspaceClassSlices(BaseModel):
-    classes: List[WorkspaceClass] = Field(default_factory=list)
+    classes: List[FileClassSlice] = Field(default_factory=list)
 
 
 # ==========================================================
@@ -78,12 +66,14 @@ def _under_size_limit(p: Path, max_file_mb: Optional[float]) -> bool:
 # ==========================================================
 
 class _ClassCollector(ast.NodeVisitor):
-    """仅收集类定义（包含整个类体），并统计其直接定义的方法名；不负责函数切片或调用关系提取。"""
+    """收集类定义（包含整个类体），并统计其直接定义的方法名；
+    内部仅返回原始信息，由上层构建 FileClassSlice。
+    """
 
     def __init__(self, src: str):
         self.src = src
         self.parents: List[str] = []  # 用于构造 qualname
-        self.classes: List[ClassSlice] = []
+        self.classes: List[dict] = []
 
     def visit_ClassDef(self, node: ast.ClassDef):
         qual = ".".join(self.parents + [node.name]) if self.parents else node.name
@@ -94,13 +84,12 @@ class _ClassCollector(ast.NodeVisitor):
             if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 method_qualnames.append(f"{qual}.{n.name}")
 
-        cls_slice = ClassSlice(
-            name=node.name,
-            qualname=qual,
-            source=_get_source_segment(self.src, node),
-            methods=method_qualnames,
-        )
-        self.classes.append(cls_slice)
+        self.classes.append({
+            "name": node.name,
+            "qualname": qual,
+            "source": _get_source_segment(self.src, node),
+            "methods": method_qualnames,
+        })
 
         # 进入类作用域，继续收集内部类
         self.parents.append(node.name)
@@ -123,8 +112,8 @@ class _ClassCollector(ast.NodeVisitor):
 #                        Public APIs
 # ==========================================================
 
-def extract_class_slices(py_file: str) -> List[ClassSlice]:
-    """提取单文件类切片以及类内直系方法列表。"""
+def extract_class_slices(py_file: str) -> List[FileClassSlice]:
+    """提取单文件类切片以及类内直系方法列表，返回 FileClassSlice 列表。"""
     path = Path(py_file)
     if not path.exists() or not path.is_file():
         raise FileNotFoundError(py_file)
@@ -139,7 +128,16 @@ def extract_class_slices(py_file: str) -> List[ClassSlice]:
     collector.visit(tree)
     collector.parents.pop()
 
-    return collector.classes
+    return [
+        FileClassSlice(
+            file=str(path),
+            name=cls_info["name"],
+            qualname=cls_info["qualname"],
+            source=cls_info["source"],
+            methods=list(cls_info.get("methods", [])),
+        )
+        for cls_info in collector.classes
+    ]
 
 
 def slice_classes_in_workspace(
@@ -151,8 +149,7 @@ def slice_classes_in_workspace(
     """对整个 workspace 进行“类视角”的切片与整合，并扁平化输出。"""
     root = Path(workspace_root).resolve()
 
-    flat_classes: List[WorkspaceClass] = []
-    num_classes = 0
+    flat_classes: List[FileClassSlice] = []
     processed = 0
 
     for py_file in _iter_py_files(root, exclude_dirs=exclude_dirs):
@@ -160,26 +157,11 @@ def slice_classes_in_workspace(
             continue
 
         try:
-            class_slices: List[ClassSlice] = extract_class_slices(str(py_file))
+            file_class_slices: List[FileClassSlice] = extract_class_slices(str(py_file))
             processed += 1
-            num_classes += len(class_slices)
-
-            for cls in class_slices:
-                flat_classes.append(
-                    WorkspaceClass(
-                        file=str(py_file),
-                        name=cls.name,
-                        qualname=cls.qualname,
-                        source=cls.source,
-                        methods=list(cls.methods),
-                    )
-                )
-
-        except SyntaxError as e:
-           continue
-        except UnicodeDecodeError as e:
-            continue
+            flat_classes.extend(file_class_slices)
         except Exception as e:
+            logger.error(e)
             continue
 
     return WorkspaceClassSlices(
