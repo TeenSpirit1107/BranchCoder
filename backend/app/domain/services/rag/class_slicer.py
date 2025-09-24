@@ -28,19 +28,8 @@ class WorkspaceClass(BaseModel):
     methods: List[str] = Field(default_factory=list)
 
 
-class SliceError(BaseModel):
-    file: str
-    message: str
-    lineno: Optional[int] = None
-    colno: Optional[int] = None
-
-
 class WorkspaceClassSlices(BaseModel):
-    root: str
     classes: List[WorkspaceClass] = Field(default_factory=list)
-    errors: List[SliceError] = Field(default_factory=list)
-    num_files_processed: int = 0
-    num_classes: int = 0
 
 
 # ==========================================================
@@ -162,7 +151,6 @@ def slice_classes_in_workspace(
 ) -> WorkspaceClassSlices:
     """对整个 workspace 进行“类视角”的切片与整合，并扁平化输出。"""
     root = Path(workspace_root).resolve()
-    errors: List[SliceError] = []
 
     flat_classes: List[WorkspaceClass] = []
     num_classes = 0
@@ -170,10 +158,6 @@ def slice_classes_in_workspace(
 
     for py_file in _iter_py_files(root, exclude_dirs=exclude_dirs):
         if not _under_size_limit(py_file, max_file_mb):
-            errors.append(SliceError(
-                file=str(py_file),
-                message=f"Skipped: file too large (> {max_file_mb} MB)"
-            ))
             continue
 
         try:
@@ -193,27 +177,12 @@ def slice_classes_in_workspace(
                 )
 
         except SyntaxError as e:
-            errors.append(SliceError(
-                file=str(py_file),
-                message=f"SyntaxError: {e.msg}",
-                lineno=getattr(e, "lineno", None),
-                colno=getattr(e, "offset", None),
-            ))
+           continue
         except UnicodeDecodeError as e:
-            errors.append(SliceError(
-                file=str(py_file),
-                message=f"UnicodeDecodeError: {e.reason}"
-            ))
+            continue
         except Exception as e:
-            errors.append(SliceError(
-                file=str(py_file),
-                message=f"UnhandledError: {e.__class__.__name__}: {e}"
-            ))
+            continue
 
     return WorkspaceClassSlices(
-        root=str(root),
         classes=flat_classes,
-        errors=errors,
-        num_files_processed=processed,
-        num_classes=num_classes,
     )
