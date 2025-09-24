@@ -72,15 +72,15 @@ class OpenAILLM:
             messages: List[Dict[str, str]],
             tools: Optional[List[Dict[str, Any]]] = None,
             model: Optional[str] = None,
-            temperature: Optional[float] = 0,
+            temperature: Optional[float] = 0.1,
     ) -> Dict[str, Any]:
         try:
             if tools:
                 logger.debug(f"Sending request to OpenAI with tools, model: {self.model_name}")
                 response = await self.client.chat.completions.create(
                     model=model,
-                    temperature=temperature,
-                    max_tokens=self.max_tokens,
+                    # temperature=temperature,
+                    # max_completion_tokens=self.max_tokens,
                     messages=messages,
                     tools=tools,
                     # response_format=response_format,
@@ -89,8 +89,8 @@ class OpenAILLM:
                 logger.debug(f"Sending request to OpenAI without tools, model: {self.model_name}")
                 response = await self.client.chat.completions.create(
                     model=model,
-                    temperature=temperature,
-                    max_tokens=self.max_tokens,
+                    # temperature=temperature,
+                    # max_completion_tokens=self.max_tokens,
                     messages=messages,
                     # response_format=response_format
                 )
