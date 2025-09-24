@@ -1,12 +1,9 @@
-from __future__ import annotations
-
 import ast
 import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Set
-
 from pydantic import BaseModel, Field
 
 
@@ -14,16 +11,16 @@ from pydantic import BaseModel, Field
 # Pydantic v2 Models
 # ---------------------------
 
-class WorkspaceFunction(BaseModel):
-    file: str                       # 来自于哪个文件（相对路径）
+class FunctionSlice(BaseModel):
+    file: str                       # 来自哪个文件（相对路径）
     qualname: str                   # 函数（或方法）限定名
     source: str                     # 函数源代码
     calls: List[str] = Field(default_factory=list)
     called_by: List[str] = Field(default_factory=list)
 
 
-class WorkspaceResult(BaseModel):
-    items: List[WorkspaceFunction]
+class WorkspaceFunctionSlices(BaseModel):
+    items: List[FunctionSlice]
 
 
 # ---------------------------
@@ -86,7 +83,7 @@ class _QualnameBuilder(ast.NodeVisitor):
         self.generic_visit(node)
         self._pop()
 
-    def visit_FunctionDef(self, node: ast.FunctionDef):
+    def visit_FunctionDef(self, node: ast.AsyncFunctionDef):
         qn = self._qual(node.name)
         src = "".join(self.code[node.lineno - 1: node.end_lineno])
         self.funcs.append(
@@ -152,7 +149,7 @@ class _CallCollector(ast.NodeVisitor):
         self.generic_visit(node)
 
 
-def _ast_fallback_calls(files: List[Path], root: Path, func_index: Dict[str, _FuncDef]) -> Dict[str, Set[str]]:
+def _ast_fallback_calls(root: Path, func_index: Dict[str, _FuncDef]) -> Dict[str, Set[str]]:
     """
     极简静态分析：对每个函数体里出现的调用，收集函数名（不含 fully-qualified）。
     仅用作在没有 pycg / pyan3 时的保底。
@@ -245,7 +242,7 @@ def _best_match(candidate: str, pool: Set[str]) -> Optional[str]:
 # 主函数
 # ---------------------------
 
-def slice_functions_in_workspace(workspace_path: str) -> WorkspaceResult:
+def slice_functions_in_workspace(workspace_path: str) -> WorkspaceFunctionSlices:
     """
     遍历工作区，切出所有函数/方法源码，并生成调用关系（calls / called_by）。
     调用关系优先使用 pycg，其次 pyan3；若都不可用，则回退到 AST 简易分析。
@@ -259,7 +256,7 @@ def slice_functions_in_workspace(workspace_path: str) -> WorkspaceResult:
 
     known_qualnames = set(func_index.keys())
 
-    calls_map = _ast_fallback_calls(files, root, func_index)
+    calls_map = _ast_fallback_calls(root, func_index)
 
     # 反向边：called_by
     called_by_map: Dict[str, Set[str]] = {qn: set() for qn in known_qualnames}
@@ -267,10 +264,10 @@ def slice_functions_in_workspace(workspace_path: str) -> WorkspaceResult:
         for callee in callees:
             called_by_map.setdefault(callee, set()).add(caller)
 
-    items: List[WorkspaceFunction] = []
+    items: List[FunctionSlice] = []
     for qn, fd in func_index.items():
         items.append(
-            WorkspaceFunction(
+            FunctionSlice(
                 file=str(fd.file).replace("\\", "/"),
                 qualname=qn,
                 source=fd.source,
@@ -279,4 +276,4 @@ def slice_functions_in_workspace(workspace_path: str) -> WorkspaceResult:
             )
         )
 
-    return WorkspaceResult(items=items)
+    return WorkspaceFunctionSlices(items=items)
