@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
-class FileClassSlice(BaseModel):
+class ClassSlice(BaseModel):
     file: str
     name: str
     qualname: str
@@ -17,7 +17,7 @@ class FileClassSlice(BaseModel):
 
 
 class WorkspaceClassSlices(BaseModel):
-    classes: List[FileClassSlice] = Field(default_factory=list)
+    classes: List[ClassSlice] = Field(default_factory=list)
 
 
 # ==========================================================
@@ -56,7 +56,8 @@ def _under_size_limit(p: Path, max_file_mb: Optional[float]) -> bool:
         return True
     try:
         size = p.stat().st_size
-    except Exception:
+    except Exception as e:
+        logger.error(e)
         return True
     return size <= max_file_mb * 1024 * 1024
 
@@ -112,7 +113,7 @@ class _ClassCollector(ast.NodeVisitor):
 #                        Public APIs
 # ==========================================================
 
-def extract_class_slices(py_file: str) -> List[FileClassSlice]:
+def extract_class_slices(py_file: str) -> List[ClassSlice]:
     """提取单文件类切片以及类内直系方法列表，返回 FileClassSlice 列表。"""
     path = Path(py_file)
     if not path.exists() or not path.is_file():
@@ -129,7 +130,7 @@ def extract_class_slices(py_file: str) -> List[FileClassSlice]:
     collector.parents.pop()
 
     return [
-        FileClassSlice(
+        ClassSlice(
             file=str(path),
             name=cls_info["name"],
             qualname=cls_info["qualname"],
@@ -149,7 +150,7 @@ def slice_classes_in_workspace(
     """对整个 workspace 进行“类视角”的切片与整合，并扁平化输出。"""
     root = Path(workspace_root).resolve()
 
-    flat_classes: List[FileClassSlice] = []
+    flat_classes: List[ClassSlice] = []
     processed = 0
 
     for py_file in _iter_py_files(root, exclude_dirs=exclude_dirs):
@@ -157,7 +158,7 @@ def slice_classes_in_workspace(
             continue
 
         try:
-            file_class_slices: List[FileClassSlice] = extract_class_slices(str(py_file))
+            file_class_slices: List[ClassSlice] = extract_class_slices(str(py_file))
             processed += 1
             flat_classes.extend(file_class_slices)
         except Exception as e:
