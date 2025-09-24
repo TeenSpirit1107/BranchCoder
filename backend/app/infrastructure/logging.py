@@ -3,12 +3,7 @@ import sys
 import os
 from .config import get_settings
 
-class SuperPlannerFilter(logging.Filter):
-    """只允许super_planner相关的日志通过"""
-    def filter(self, record):
-        # 添加调试信息
-        print(f"Filtering log: {record.name}, level: {record.levelname}, message: {record.getMessage()}")
-        return record.name.startswith('super_planner.')
+
 
 class ComponentLoggerFilter(logging.Filter):
     """更灵活的组件日志过滤器"""
@@ -19,16 +14,11 @@ class ComponentLoggerFilter(logging.Filter):
     
     def filter(self, record):
         # 根据配置决定是否显示super_planner相关日志
-        if self.show_super_planner and record.name.startswith('super_planner'):
+        if self.show_super_planner and (record.name.startswith('super_planner') or record.name.startswith('super_planner_flow')):
             return True
-        
         # 根据配置决定是否显示sub_planner相关日志
-        # if (record.name.startswith('sub_planner_interface.') or 
-        #     record.name.startswith('sub_planner_agent.') or
-        #     record.name.startswith('sub_planner_flow.')):
-        if self.show_sub_planners and record.name.startswith('sub_planner'):
+        if self.show_sub_planners and (record.name.startswith('sub_planner') or record.name.startswith('sub_planner_flow')):
             return True
-        
         return False
     
 def _remove_existing_log_file(log_file_path: str):
@@ -52,6 +42,9 @@ def setup_logging():
     
     # Get root logger
     root_logger = logging.getLogger()
+
+    # Clear existing handlers to avoid duplicate outputs from other frameworks (e.g., uvicorn)
+    # root_logger.handlers.clear()
     
     # Set root log level
     log_level = getattr(logging, settings.log_level)
@@ -63,13 +56,13 @@ def setup_logging():
         datefmt='%Y-%m-%d %H:%M:%S'
     )
     
-    # Create console handler
+    # Create console handler (show all by default; filtering can be enabled separately if needed)
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setFormatter(formatter)
-    console_handler.setLevel(logging.INFO)  # 确保控制台处理器级别足够低
+    console_handler.setLevel(logging.DEBUG)  # 确保控制台处理器级别足够低
     
     # 添加组件过滤器，默认显示super_planner和sub_planner的日志
-    console_handler.addFilter(ComponentLoggerFilter(show_sub_planners=True, show_super_planner=True))
+    # console_handler.addFilter(ComponentLoggerFilter(show_sub_planners=True, show_super_planner=True))
     
     # Add handlers to root logger
     root_logger.addHandler(console_handler)
@@ -79,10 +72,8 @@ def setup_logging():
     if not os.path.exists(logs_dir):
         os.makedirs(logs_dir)
     
-    # Remove existing log file and create new file handler for general application logs
+    # Create file handler for general application logs (append mode to avoid losing history)
     app_log_path = os.path.join(logs_dir, "app.log")
-    _remove_existing_log_file(app_log_path)
-    
     file_handler = logging.FileHandler(
         app_log_path,
         mode='w',  # 覆盖写入模式
@@ -91,6 +82,21 @@ def setup_logging():
     file_handler.setFormatter(formatter)
     file_handler.setLevel(log_level)
     root_logger.addHandler(file_handler)
+
+    # 添加Agent单独日志记录
+    # 如果以agent.开头，则设置为DEBUG，添加文件Handler
+    for logger_name in root_logger.manager.loggerDict:
+        if logger_name.startswith("agent."):
+            # 创建文件Handler
+            file_handler = logging.FileHandler(
+                os.path.join(logs_dir, f"{logger_name}.log"),
+                mode='w',  # 覆盖写入模式
+                encoding='utf-8'
+            )
+            file_handler.setFormatter(formatter)
+            file_handler.setLevel(logging.DEBUG)
+            _logger = logging.getLogger(logger_name)
+            _logger.addHandler(file_handler)
 
     # 配置SQLAlchemy相关日志器的级别，减少冗余日志
     sqlalchemy_loggers = [
@@ -107,6 +113,9 @@ def setup_logging():
     # Log initialization complete
     root_logger.info("Logging system initialized - Console and file logging active")
     root_logger.info("SQLAlchemy logging level set to WARNING to reduce verbosity")
+
+    # Traceloop
+
 
 def setup_plan_act_logger(agent_id: str) -> logging.Logger:
     """
@@ -265,8 +274,8 @@ def setup_super_planner_flow_logger(agent_id: str) -> logging.Logger:
     # 添加处理器
     logger.addHandler(file_handler)
     
-    # 允许日志向上传播到根日志器，这样控制台也能看到日志
-    logger.propagate = True
+    # 不允许日志向上传播到根日志器
+    logger.propagate = False
     
     return logger
 
@@ -311,8 +320,8 @@ def setup_super_planner_agent_logger(agent_id: str) -> logging.Logger:
     # 添加处理器
     logger.addHandler(file_handler)
     
-    # 允许日志向上传播到根日志器，这样控制台也能看到日志
-    logger.propagate = True
+    # 不允许日志向上传播到根日志器
+    logger.propagate = False
     
     return logger
 
@@ -346,8 +355,8 @@ def setup_sub_planner_interface_logger(agent_id: str) -> logging.Logger:
     
     logger.addHandler(file_handler)
     
-    # 关键：允许传播，但通过过滤器控制
-    logger.propagate = True
+    # 不允许日志向上传播到根日志器
+    logger.propagate = False
     
     return logger
 
@@ -359,7 +368,7 @@ def setup_sub_planner_agent_logger(agent_id: str) -> logging.Logger:
     if logger.handlers:
         return logger
     
-    logger.setLevel(logging.INFO)
+    logger.setLevel(logging.DEBUG)
     
     # 创建sub_planner_agent专用目录
     logs_dir = "logs"
@@ -377,12 +386,58 @@ def setup_sub_planner_agent_logger(agent_id: str) -> logging.Logger:
     
     file_handler = logging.FileHandler(log_file_path, mode='w', encoding='utf-8')
     file_handler.setFormatter(formatter)
-    file_handler.setLevel(logging.INFO)
+    file_handler.setLevel(logging.DEBUG)
     
     logger.addHandler(file_handler)
     
-    # 关键：允许传播，但通过过滤器控制
-    logger.propagate = True
+    # 不允许日志向上传播到根日志器
+    logger.propagate = False
+    
+    return logger
+
+def setup_search_flow_logger(agent_id: str) -> logging.Logger:
+    """为SearchFlow创建专门的日志记录器"""
+    logger_name = f"search_flow.{agent_id}"
+    logger = logging.getLogger(logger_name)
+    
+    if logger.handlers:
+        return logger
+    
+    logger.setLevel(logging.DEBUG)
+    
+    # 创建logs目录
+    logs_dir = "logs"
+    if not os.path.exists(logs_dir):
+        os.makedirs(logs_dir)
+    
+    # 创建search_flow专用目录
+    search_flow_dir = os.path.join(logs_dir, "search_flow")
+    if not os.path.exists(search_flow_dir):
+        os.makedirs(search_flow_dir)
+    
+    # 创建格式化器
+    formatter = logging.Formatter(
+        '%(asctime)s - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    
+    # 删除已存在的日志文件并创建新的文件处理器
+    log_file_path = os.path.join(search_flow_dir, f"{agent_id}.log")
+    _remove_existing_log_file(log_file_path)
+    
+    file_handler = logging.FileHandler(
+        log_file_path,
+        mode='w',  # 覆盖写入模式
+        encoding='utf-8'
+    )
+    file_handler.setFormatter(formatter)
+    file_handler.setLevel(logging.DEBUG)
+    
+    # 添加处理器
+    logger.addHandler(file_handler)
+    
+    # 不允许日志向上传播到根日志器
+    logger.propagate = False
     
     return logger
 
@@ -394,7 +449,7 @@ def setup_sub_planner_flow_logger(agent_id: str) -> logging.Logger:
     if logger.handlers:
         return logger
     
-    logger.setLevel(logging.INFO)
+    logger.setLevel(logging.DEBUG)
     
     # 创建logs目录
     logs_dir = "logs"
@@ -422,13 +477,58 @@ def setup_sub_planner_flow_logger(agent_id: str) -> logging.Logger:
         encoding='utf-8'
     )
     file_handler.setFormatter(formatter)
-    file_handler.setLevel(logging.INFO)
+    file_handler.setLevel(logging.DEBUG)
     
     # 添加处理器
     logger.addHandler(file_handler)
     
-    # 允许日志向上传播到根日志器，这样控制台也能看到日志
-    logger.propagate = True
+    # 不允许日志向上传播到根日志器
+    logger.propagate = False
     
     return logger
 
+def setup_mcp_flow_logger(agent_id: str) -> logging.Logger:
+    """为McpFlow创建专门的日志记录器"""
+    logger_name = f"mcp_flow.{agent_id}"
+    logger = logging.getLogger(logger_name)
+    
+    if logger.handlers:
+        return logger
+    
+    logger.setLevel(logging.DEBUG)
+    
+    # 创建logs目录
+    logs_dir = "logs"
+    if not os.path.exists(logs_dir):
+        os.makedirs(logs_dir)
+    
+    # 创建mcp_flow专用目录
+    mcp_flow_dir = os.path.join(logs_dir, "mcp_flow")
+    if not os.path.exists(mcp_flow_dir):
+        os.makedirs(mcp_flow_dir)
+    
+    # 创建格式化器
+    formatter = logging.Formatter(
+        '%(asctime)s - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    
+    # 删除已存在的日志文件并创建新的文件处理器
+    log_file_path = os.path.join(mcp_flow_dir, f"{agent_id}.log")
+    _remove_existing_log_file(log_file_path)
+    
+    file_handler = logging.FileHandler(
+        log_file_path,
+        mode='w',  # 覆盖写入模式
+        encoding='utf-8'
+    )
+    file_handler.setFormatter(formatter)
+    file_handler.setLevel(logging.DEBUG)
+    
+    # 添加处理器
+    logger.addHandler(file_handler)
+    
+    # 不允许日志向上传播到根日志器
+    logger.propagate = False
+    
+    return logger
