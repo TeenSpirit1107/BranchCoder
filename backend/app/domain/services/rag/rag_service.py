@@ -26,10 +26,14 @@ class RagService:
         )
 
     async def initiate(self, workspace_dir):
-        description_result = self.description_generator.run(workspace_dir=workspace_dir)
+        description_result = await self.description_generator.run(workspace_dir=workspace_dir)
+        logger.info(f"description generation finish")
         self.indexing_service.load_from_model(description_result)
-        return
+        logger.info(f"indexing initialization finish")
+        return True
 
-    async def retrival(self):
-        results = self.indexing_service.retrieve("你的查询", top_k=5)
+    async def retrival(self, query):
+        logger.info(f"retrival start")
+        results = self.indexing_service.retrieve(query, top_k=5)
+        logger.info(f"retrival finish")
         return results
