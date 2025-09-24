@@ -3,6 +3,7 @@ import logging
 from enum import Enum
 
 from app.domain.services.flows.base import BaseFlow, BaseSubFlow
+from app.domain.services.flows.branch_code_flow import BranchCodeFlow
 from app.domain.services.flows.plan_act import PlanActFlow
 from app.domain.services.flows.simple_chat import SimpleChatFlow
 from app.domain.services.flows.default_flow import DefaultFlow
@@ -29,6 +30,7 @@ class FlowFactory:
         """注册默认的flow类型"""
         self.register_flow(PlanActFlow)
         self.register_flow(SimpleChatFlow)
+        self.register_flow(BranchCodeFlow)
         # 延迟导入 SuperPlannerFlow 以避免循环导入
         from app.domain.services.flows.super_flow import SuperFlow
         self.register_flow(SuperFlow)
