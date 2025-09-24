@@ -1,12 +1,13 @@
 import logging
+import os
 from pathlib import Path
 from typing import Dict, List, Tuple
 from pydantic import BaseModel
 import json
 
 from app.domain.external import LLM
-from function_slicer import FunctionSlice, WorkspaceFunctionSlices, FunctionSlicer
-from class_slicer import ClassSlice, ClassSlicer
+from app.domain.services.rag.function_slicer import FunctionSlice, WorkspaceFunctionSlices, FunctionSlicer
+from app.domain.services.rag.class_slicer import ClassSlice, ClassSlicer
 
 logger = logging.getLogger(__name__)
 
@@ -173,7 +174,7 @@ class DescriptionGenerator:
         return file_desc, fn_descs, cls_descs
 
 
-    def describe_workspace(self, workspace_dir) -> DescribeOutput:
+    async def describe_workspace(self, workspace_dir) -> DescribeOutput:
         """核心入口：
         1) 按文件分组函数
         2) 读取文件源码，调用 LLM 生成文件/函数描述
@@ -181,6 +182,8 @@ class DescriptionGenerator:
         4) 将每个文件级描述存盘（可选）
         5) 返回归并后的结果
         """
+        # Ensure workspace_dir is a Path to support path joining with '/'
+        workspace_dir = Path(workspace_dir)
         function_slice = FunctionSlicer().slice_workspace(workspace_dir)
         classes_in_workspace = ClassSlicer().slice_workspace(workspace_dir)
 
@@ -211,8 +214,10 @@ class DescriptionGenerator:
         described_items: List[DescribedFunction] = []
         described_classes_acc: List[DescribedClass] = []
         file_descs: List[FileDescription] = []
-
+        total = len(grouped.items())
+        current = 0
         for rel_file, fns in grouped.items():
+            current += 1
             abs_file = (workspace_dir / rel_file).resolve()
             # 获取该文件对应的类切片（兼容绝对/相对路径）
             file_classes: List[ClassSlice] = []
@@ -228,9 +233,11 @@ class DescriptionGenerator:
                 raise Exception(file_text)
 
             prompt = self._build_prompt(rel_file, file_text, fns, file_classes)
-            resp = self.llm.custom_ask(
+            print(prompt)
+            print(current/total)
+            resp = await self.llm.custom_ask(
                 model='gpt-5-nano',
-                temperature=0,
+                # temperature=0.1,
                 messages=[{"role": "user", "content": prompt}],
             )
             try:
@@ -321,7 +328,7 @@ class DescriptionGenerator:
             classes=described_classes_acc,
         )
 
-        aggregate_file = Path("describe_output.json")
+        aggregate_file = Path(os.path.join("app","domain","services","rag","describe_output.json"))
 
         # 确保父目录存在
         aggregate_file.parent.mkdir(parents=True, exist_ok=True)
@@ -334,7 +341,7 @@ class DescriptionGenerator:
 
         return final_result
 
-    def run(self, workspace_dir):
-        return self.describe_workspace(
+    async def run(self, workspace_dir):
+        return await self.describe_workspace(
             workspace_dir=workspace_dir,
         )
