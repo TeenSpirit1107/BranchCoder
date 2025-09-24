@@ -1,4 +1,4 @@
-from ..function_slicer import slice_functions_in_workspace
+from function_slicer import slice_functions_in_workspace
 
 if __name__ == "__main__":
     res = slice_functions_in_workspace("sample_workspace")

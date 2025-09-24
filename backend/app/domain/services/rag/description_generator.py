@@ -5,9 +5,8 @@ from pydantic import BaseModel
 import json
 
 from app.domain.external import LLM
-from function_slicer import FunctionSlice, WorkspaceFunctionSlices
-from class_slicer import ClassSlice, slice_classes_in_workspace
-from function_slicer import slice_functions_in_workspace
+from function_slicer import FunctionSlice, WorkspaceFunctionSlices, FunctionSlicer
+from class_slicer import ClassSlice, ClassSlicer
 
 logger = logging.getLogger(__name__)
 
@@ -182,8 +181,8 @@ class DescriptionGenerator:
         4) 将每个文件级描述存盘（可选）
         5) 返回归并后的结果
         """
-        function_slice = slice_functions_in_workspace(workspace_dir)
-        classes_in_workspace = slice_classes_in_workspace(workspace_dir)
+        function_slice = FunctionSlicer().slice_workspace(workspace_dir)
+        classes_in_workspace = ClassSlicer().slice_workspace(workspace_dir)
 
         grouped = self._group_functions_by_file(function_slice)
 

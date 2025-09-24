@@ -1,4 +1,4 @@
-from ..class_slicer import slice_classes_in_workspace
+from class_slicer import slice_classes_in_workspace
 
 if __name__ == "__main__":
     res = slice_classes_in_workspace("sample_workspace")

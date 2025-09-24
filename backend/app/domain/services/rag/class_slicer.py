@@ -141,30 +141,53 @@ def extract_class_slices(py_file: str) -> List[ClassSlice]:
     ]
 
 
+class ClassSlicer:
+    """Slice classes across workspace and flatten results.
+
+    This class wraps previous module-level functions for an OO interface
+    without changing observable behavior.
+    """
+
+    def slice_workspace(
+        self,
+        workspace_root: str | Path,
+        *,
+        exclude_dirs: Optional[Set[str]] = None,
+        max_file_mb: Optional[float] = 2.0,
+    ) -> WorkspaceClassSlices:
+        """Slice classes for the entire workspace and return a flat list."""
+        root = Path(workspace_root).resolve()
+
+        flat_classes: List[ClassSlice] = []
+        processed = 0
+
+        for py_file in _iter_py_files(root, exclude_dirs=exclude_dirs):
+            if not _under_size_limit(py_file, max_file_mb):
+                continue
+
+            try:
+                file_class_slices: List[ClassSlice] = extract_class_slices(str(py_file))
+                processed += 1
+                flat_classes.extend(file_class_slices)
+            except Exception as e:
+                logger.error(e)
+                continue
+
+        return WorkspaceClassSlices(
+            classes=flat_classes,
+        )
+
+
+# Backward-compatible wrapper
 def slice_classes_in_workspace(
     workspace_root: str | Path,
     *,
     exclude_dirs: Optional[Set[str]] = None,
     max_file_mb: Optional[float] = 2.0,
 ) -> WorkspaceClassSlices:
-    """对整个 workspace 进行“类视角”的切片与整合，并扁平化输出。"""
-    root = Path(workspace_root).resolve()
-
-    flat_classes: List[ClassSlice] = []
-    processed = 0
-
-    for py_file in _iter_py_files(root, exclude_dirs=exclude_dirs):
-        if not _under_size_limit(py_file, max_file_mb):
-            continue
-
-        try:
-            file_class_slices: List[ClassSlice] = extract_class_slices(str(py_file))
-            processed += 1
-            flat_classes.extend(file_class_slices)
-        except Exception as e:
-            logger.error(e)
-            continue
-
-    return WorkspaceClassSlices(
-        classes=flat_classes,
+    """Backward-compatible function wrapper. Prefer ClassSlicer().slice_workspace()."""
+    return ClassSlicer().slice_workspace(
+        workspace_root,
+        exclude_dirs=exclude_dirs,
+        max_file_mb=max_file_mb,
     )

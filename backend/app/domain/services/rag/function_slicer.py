@@ -239,41 +239,53 @@ def _best_match(candidate: str, pool: Set[str]) -> Optional[str]:
 
 
 # ---------------------------
-# 主函数
+# Class-based public API
+# ---------------------------
+
+class FunctionSlicer:
+    """Slice functions/methods across a workspace and build simple call graph.
+
+    This class wraps the previous module-level implementation to provide
+    an object-oriented interface without changing behavior.
+    """
+
+    def slice_workspace(self, workspace_path: str | Path) -> WorkspaceFunctionSlices:
+        """Slice all functions in workspace and produce calls/called_by relations."""
+        root = Path(workspace_path).resolve()
+        if not root.exists() or not root.is_dir():
+            raise ValueError(f"Invalid workspace path: {workspace_path}")
+
+        files = _iter_python_files(root)
+        func_index = _slice_functions(files, root)
+
+        known_qualnames = set(func_index.keys())
+
+        calls_map = _ast_fallback_calls(root, func_index)
+
+        called_by_map: Dict[str, Set[str]] = {qn: set() for qn in known_qualnames}
+        for caller, callees in calls_map.items():
+            for callee in callees:
+                called_by_map.setdefault(callee, set()).add(caller)
+
+        items: List[FunctionSlice] = []
+        for qn, fd in func_index.items():
+            items.append(
+                FunctionSlice(
+                    file=str(fd.file).replace("\\", "/"),
+                    qualname=qn,
+                    source=fd.source,
+                    calls=sorted(list(calls_map.get(qn, set()))),
+                    called_by=sorted(list(called_by_map.get(qn, set())))
+                )
+            )
+
+        return WorkspaceFunctionSlices(items=items)
+
+
+# ---------------------------
+# Backward-compatible wrappers
 # ---------------------------
 
 def slice_functions_in_workspace(workspace_path: str) -> WorkspaceFunctionSlices:
-    """
-    遍历工作区，切出所有函数/方法源码，并生成调用关系（calls / called_by）。
-    调用关系优先使用 pycg，其次 pyan3；若都不可用，则回退到 AST 简易分析。
-    """
-    root = Path(workspace_path).resolve()
-    if not root.exists() or not root.is_dir():
-        raise ValueError(f"Invalid workspace path: {workspace_path}")
-
-    files = _iter_python_files(root)
-    func_index = _slice_functions(files, root)   # qualname -> _FuncDef
-
-    known_qualnames = set(func_index.keys())
-
-    calls_map = _ast_fallback_calls(root, func_index)
-
-    # 反向边：called_by
-    called_by_map: Dict[str, Set[str]] = {qn: set() for qn in known_qualnames}
-    for caller, callees in calls_map.items():
-        for callee in callees:
-            called_by_map.setdefault(callee, set()).add(caller)
-
-    items: List[FunctionSlice] = []
-    for qn, fd in func_index.items():
-        items.append(
-            FunctionSlice(
-                file=str(fd.file).replace("\\", "/"),
-                qualname=qn,
-                source=fd.source,
-                calls=sorted(list(calls_map.get(qn, set()))),
-                called_by=sorted(list(called_by_map.get(qn, set())))
-            )
-        )
-
-    return WorkspaceFunctionSlices(items=items)
+    """Backward-compatible function wrapper. Prefer FunctionSlicer().slice_workspace()."""
+    return FunctionSlicer().slice_workspace(workspace_path)
