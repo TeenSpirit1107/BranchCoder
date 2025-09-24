@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from pathlib import Path
 
 # ---- LlamaIndex Core ----
-from llama_index.core import Document, VectorStoreIndex, Settings, StorageContext, load_index_from_storage
+from llama_index.core import Document, VectorStoreIndex, StorageContext, load_index_from_storage
 
 # ---- Postprocessor: LLM Rerank ----
 from llama_index.core.postprocessor import LLMRerank

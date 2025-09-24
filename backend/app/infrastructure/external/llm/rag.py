@@ -7,7 +7,8 @@ from llama_index.core import Settings
 from llama_index.embeddings.openai import OpenAIEmbedding
 from llama_index.llms.openai import OpenAI
 
-from app.main import settings
+from app.infrastructure.config import get_settings
+settings = get_settings()
 
 # ======= OpenAI 配置（如需改为环境变量，请在此文件中调整）=======
 # NOTE: Hard-coded for now to mirror previous behavior. Consider env vars.
