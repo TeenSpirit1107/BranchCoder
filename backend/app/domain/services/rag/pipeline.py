@@ -129,6 +129,24 @@ def parse_llm_response(raw: str) -> Tuple[str, Dict[str, str], Dict[str, str]]:
     cls_descs: Dict[str, str] = {}
 
     section = None
+
+    def _normalize_key(name: str) -> str:
+        """Normalize qualname parsed from LLM output.
+
+        - Trim whitespace
+        - Remove leading bullet '-' if present
+        - Strip surrounding square brackets [ ... ] if present
+        - Collapse remaining extra spaces
+        """
+        s = name.strip()
+        # remove leading dash bullets
+        if s.startswith("-"):
+            s = s.lstrip("-").strip()
+        # strip surrounding brackets like [<module>.Class]
+        if s.startswith("[") and s.endswith("]"):
+            s = s[1:-1].strip()
+        # normalize internal whitespace
+        return " ".join(s.split())
     for line in raw.splitlines():
         s = line.strip()
         if s == "[FILE]":
@@ -147,14 +165,14 @@ def parse_llm_response(raw: str) -> Tuple[str, Dict[str, str], Dict[str, str]]:
         elif section == "FUNCTIONS":
             if ":" in s:
                 q, d = s.split(":", 1)
-                q = q.strip()
+                q = _normalize_key(q)
                 d = d.strip()
                 if q:
                     fn_descs[q] = d
         elif section == "CLASSES":
             if ":" in s:
                 q, d = s.split(":", 1)
-                q = q.strip()
+                q = _normalize_key(q)
                 d = d.strip()
                 if q:
                     cls_descs[q] = d
@@ -182,6 +200,22 @@ def describe_workspace(
         output_path = None
 
     grouped = _group_functions_by_file(function_slice)
+
+    # 全局类描述缓存，便于跨文件回填
+    global_cls_desc_by_qualname: Dict[str, str] = {}
+    global_cls_desc_by_name: Dict[str, str] = {}
+    # 全局函数描述缓存，便于跨文件回填/宽松匹配
+    global_fn_desc_by_qualname: Dict[str, str] = {}
+    global_fn_desc_by_tail2: Dict[str, str] = {}
+    global_fn_desc_by_tail1: Dict[str, str] = {}
+
+    def _normalize_key_global(name: str) -> str:
+        s = name.strip()
+        if s.startswith("-"):
+            s = s.lstrip("-").strip()
+        if s.startswith("[") and s.endswith("]"):
+            s = s[1:-1].strip()
+        return " ".join(s.split())
 
     # 收集类切片并按文件分组
     classes_in_workspace = slice_classes_in_workspace(base_dir)
@@ -220,18 +254,58 @@ def describe_workspace(
         print(content)
         file_desc, fn_descs, cls_descs = parse_llm_response(content)
 
+        # 更新全局类描述缓存（既存 qualname，也存类名便于回退）
+        for k, v in cls_descs.items():
+            key_norm = _normalize_key_global(k)
+            global_cls_desc_by_qualname[key_norm] = v
+            # 提取末尾类名用于宽松匹配
+            simple = key_norm.split(".")[-1]
+            if simple:
+                global_cls_desc_by_name[simple] = v
+
+        # 更新全局函数描述缓存（存规范化的 qualname 以及尾部片段）
+        for k, v in fn_descs.items():
+            key_norm = _normalize_key_global(k)
+            global_fn_desc_by_qualname[key_norm] = v
+            parts = key_norm.split(".")
+            if len(parts) >= 2:
+                tail2 = ".".join(parts[-2:])
+                global_fn_desc_by_tail2[tail2] = v
+            if parts:
+                tail1 = parts[-1]
+                global_fn_desc_by_tail1[tail1] = v
+
         # 保存文件级描述
         fd = FileDescription(file=rel_file, description=file_desc)
         file_descs.append(fd)
 
         # 不再为每个文件写 sidecar，仅在函数末尾写聚合文件
 
-        # 合并函数描述
+        # 合并函数描述（加入全局与宽松匹配）
         for fn in fns:
+            desc = fn_descs.get(fn.qualname, "")
+            if not desc:
+                q_norm = _normalize_key_global(fn.qualname)
+                desc = (
+                    fn_descs.get(q_norm, "")
+                    or global_fn_desc_by_qualname.get(fn.qualname, "")
+                    or global_fn_desc_by_qualname.get(q_norm, "")
+                )
+            if not desc:
+                parts = q_norm.split(".")
+                tail2 = ".".join(parts[-2:]) if len(parts) >= 2 else ""
+                tail1 = parts[-1] if parts else ""
+                desc = (
+                    fn_descs.get(tail2, "")
+                    or fn_descs.get(tail1, "")
+                    or global_fn_desc_by_tail2.get(tail2, "")
+                    or global_fn_desc_by_tail1.get(tail1, "")
+                )
+
             described_items.append(
                 DescribedWorkspaceFunction(
                     **fn.model_dump(),
-                    description=fn_descs.get(fn.qualname, ""),
+                    description=desc,
                 )
             )
 
@@ -240,9 +314,27 @@ def describe_workspace(
         if 'described_classes_acc' not in locals():
             described_classes_acc: List[DescribedWorkspaceClass] = []
         for cl in file_classes:
+            # 优先精确匹配其 qualname
+            desc = cls_descs.get(cl.qualname, "")
+            if not desc:
+                # 尝试规范化后的键匹配
+                q_norm = _normalize_key_global(cl.qualname)
+                desc = (
+                    cls_descs.get(q_norm, "")
+                    or global_cls_desc_by_qualname.get(cl.qualname, "")
+                    or global_cls_desc_by_qualname.get(q_norm, "")
+                )
+            if not desc:
+                # 宽松回退：使用类名尾部匹配（跨文件同名类回填）
+                simple = cl.name or cl.qualname.split(".")[-1]
+                desc = (
+                    cls_descs.get(simple, "")
+                    or global_cls_desc_by_name.get(simple, "")
+                )
+
             described_class = DescribedWorkspaceClass(
                 **cl.model_dump(),
-                description=cls_descs.get(cl.qualname, ""),
+                description=desc,
             )
             described_classes_acc.append(described_class)
 
