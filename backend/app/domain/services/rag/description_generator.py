@@ -233,16 +233,16 @@ class DescriptionGenerator:
                 raise Exception(file_text)
 
             prompt = self._build_prompt(rel_file, file_text, fns, file_classes)
-            print(prompt)
-            print(current/total)
+            logger.info(prompt)
+            logger.info(current/total)
             resp = await self.llm.custom_ask(
                 model='gpt-5-nano',
                 # temperature=0.1,
                 messages=[{"role": "user", "content": prompt}],
             )
-            print(resp)
+            logger.info(resp)
             try:
-                content = resp.choices[0].message.content  # type: ignore[attr-defined]
+                content = resp.content  # type: ignore[attr-defined]
             except Exception as e:
                 logger.error(e)
                 content = ""

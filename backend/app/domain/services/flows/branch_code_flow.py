@@ -12,6 +12,8 @@ from app.domain.external.search import SearchEngine
 from app.domain.external.llm import LLM, AudioLLM, ImageLLM, VideoLLM, ReasonLLM
 from app.domain.services.rag.rag_service import RagService
 
+from app.domain.models.event import ReportEvent
+
 logger = logging.getLogger(__name__)
 
 class BranchCodeFlow(BaseFlow):
@@ -45,10 +47,10 @@ class BranchCodeFlow(BaseFlow):
 
 
     async def run(self, message: str) -> AsyncGenerator[AgentEvent, None]:
-        await self.rag_service.initiate('sample_workspace')
+        # await self.rag_service.initiate('sample_workspace')
         result = await self.rag_service.retrival(message)
         logger.info(result)
-        yield MessageEvent(message=str(result))
+        yield ReportEvent(message=str(result))
 
     def is_idle(self) -> bool:
         return False
