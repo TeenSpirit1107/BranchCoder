@@ -1,0 +1,211 @@
+# rag_indexer.py
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Tuple
+
+# ---- LlamaIndex Core ----
+from llama_index.core import Document, VectorStoreIndex, Settings
+
+# ---- OpenAI Embedding & LLM ----
+from llama_index.embeddings.openai import OpenAIEmbedding
+from llama_index.llms.openai import OpenAI
+
+# ---- Postprocessor: LLM Rerank ----
+from llama_index.core.postprocessor import LLMRerank
+
+
+# ======= 在这里写死 OpenAI 配置（根据你的环境替换）=======
+OPENAI_API_KEY = "sk-8L8llDs3K8DZ7FOv00527a79Af714904A7D8C06a7e389d46"
+OPENAI_API_BASE = "https://api.shubiaobiao.cn/v1"     # 公有云；如用 Azure，改成你的 endpoint
+OPENAI_API_VERSION = None                          # Azure 才需要，如 "2024-02-15-preview"
+
+# Embedding 模型（公有云建议：text-embedding-3-small / -large；Azure 用部署名）
+DEFAULT_EMBED_MODEL = "text-embedding-3-small"
+
+# 用于 LLMRerank 的对话模型（推荐：gpt-4o-mini，性价比高）
+DEFAULT_LLM_MODEL_FOR_RERANK = "gpt-4o-mini"
+# ======================================================
+
+
+@dataclass
+class RAGBuildReport:
+    files_total: int
+    functions_total: int
+    classes_total: int
+    files_indexed: int
+    functions_indexed: int
+    classes_indexed: int
+    files_skipped: int
+    functions_skipped: int
+    classes_skipped: int
+
+
+def _init_openai_embedding(model: str) -> None:
+    """初始化 OpenAI Embedding（写死配置，不依赖环境变量）"""
+    kwargs = dict(model=model, api_key=OPENAI_API_KEY, api_base=OPENAI_API_BASE)
+    if OPENAI_API_VERSION:
+        kwargs["api_version"] = OPENAI_API_VERSION
+    Settings.embed_model = OpenAIEmbedding(**kwargs)
+
+
+def _init_openai_llm(model: str) -> None:
+    """初始化用于 LLMRerank 的 OpenAI LLM（写死配置）"""
+    kwargs = dict(model=model, api_key=OPENAI_API_KEY, api_base=OPENAI_API_BASE)
+    if OPENAI_API_VERSION:
+        kwargs["api_version"] = OPENAI_API_VERSION
+    Settings.llm = OpenAI(**kwargs)
+
+
+class TripleRAG:
+    """
+    三套独立索引：file / function / class（仅用 description 建索引；缺失即跳过）
+    可选：LLM Re-rank（基于 OpenAI 对话模型的交叉编码式重排）
+    """
+
+    def __init__(
+        self,
+        embed_model_name: str = DEFAULT_EMBED_MODEL,
+        llm_model_for_rerank: str = DEFAULT_LLM_MODEL_FOR_RERANK,
+        enable_rerank: bool = False,
+        rerank_top_n: int = 5,
+        initial_candidates: int = 20,
+    ) -> None:
+        """
+        :param embed_model_name: Embedding 模型（或 Azure 部署名）
+        :param llm_model_for_rerank: 用于重排的 LLM 模型名（如 gpt-4o-mini / gpt-4o）
+        :param enable_rerank: 是否启用重排
+        :param rerank_top_n: 重排后截断的 Top-N
+        :param initial_candidates: 重排前每类索引召回的候选数（> rerank_top_n）
+        """
+        # 初始化 OpenAI Embedding（必须）
+        _init_openai_embedding(embed_model_name)
+
+        # 是否启用重排
+        self.enable_rerank = enable_rerank
+        self.rerank_top_n = rerank_top_n
+        self.initial_candidates = max(initial_candidates, rerank_top_n)
+
+        # 如果启用重排，则初始化 LLM & Reranker
+        self.llm_reranker: Optional[LLMRerank] = None
+        if self.enable_rerank:
+            _init_openai_llm(llm_model_for_rerank)
+            # 使用全局 Settings.llm；这里也可传 llm=Settings.llm 显式绑定
+            self.llm_reranker = LLMRerank(top_n=self.rerank_top_n)
+
+        # 三个索引
+        self.file_index: Optional[VectorStoreIndex] = None
+        self.func_index: Optional[VectorStoreIndex] = None
+        self.class_index: Optional[VectorStoreIndex] = None
+
+        self.report: Optional[RAGBuildReport] = None
+
+    # ---------- 建索引 ----------
+
+    @staticmethod
+    def _docs_from_items(
+        items: List[Dict[str, Any]],
+        kind: str,
+    ) -> Tuple[List[Document], int, int]:
+        """
+        仅抽取 description 构造 Document；没有 description 的条目直接跳过
+        """
+        docs: List[Document] = []
+        skipped = 0
+        for i, it in enumerate(items or []):
+            desc = (it.get("description") or "").strip()
+            if not desc:
+                skipped += 1
+                continue
+            meta: Dict[str, Any] = {"type": kind, "idx": i}
+            if kind == "file":
+                meta["file"] = it.get("file", "")
+            elif kind == "function":
+                meta["file"] = it.get("file", "")
+                meta["qualname"] = it.get("qualname", "")
+            elif kind == "class":
+                meta["file"] = it.get("file", "")
+                meta["name"] = it.get("name", "")
+                meta["qualname"] = it.get("qualname", "")
+            docs.append(Document(text=desc, metadata=meta, doc_id=f"{kind}::{i}"))
+        return docs, len(docs), skipped
+
+    def build_from_dict(self, data: Dict[str, Any]) -> RAGBuildReport:
+        files = data.get("files", []) or []
+        functions = data.get("functions", []) or []
+        classes = data.get("classes", []) or []
+
+        file_docs, file_indexed, file_skipped = self._docs_from_items(files, "file")
+        func_docs, func_indexed, func_skipped = self._docs_from_items(functions, "function")
+        class_docs, class_indexed, class_skipped = self._docs_from_items(classes, "class")
+
+        self.file_index = VectorStoreIndex.from_documents(file_docs) if file_docs else None
+        self.func_index = VectorStoreIndex.from_documents(func_docs) if func_docs else None
+        self.class_index = VectorStoreIndex.from_documents(class_docs) if class_docs else None
+
+        self.report = RAGBuildReport(
+            files_total=len(files),
+            functions_total=len(functions),
+            classes_total=len(classes),
+            files_indexed=file_indexed,
+            functions_indexed=func_indexed,
+            classes_indexed=class_indexed,
+            files_skipped=file_skipped,
+            functions_skipped=func_skipped,
+            classes_skipped=class_skipped,
+        )
+        return self.report
+
+    def build_from_json(self, json_path: str) -> RAGBuildReport:
+        with open(json_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return self.build_from_dict(data)
+
+    # ---------- 检索 +（可选）重排 ----------
+
+    def retrieve(
+        self,
+        query: str,
+        top_k: int = 5,
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        """
+        - 如果未开启重排：对每类索引直接召回 top_k
+        - 如果开启重排：先召回 initial_candidates，再用 LLMRerank 重排并截断到 rerank_top_n
+        返回：
+        {
+          "file":     [{"score": float, "text": str, "metadata": {...}}, ...],
+          "function": [...],
+          "class":    [...]
+        }
+        """
+        out: Dict[str, List[Dict[str, Any]]] = {"file": [], "function": [], "class": []}
+
+        def _do_search(index: Optional[VectorStoreIndex], kind: str) -> None:
+            if index is None:
+                return
+
+            k = self.initial_candidates if self.enable_rerank else top_k
+            nodes = index.as_retriever(similarity_top_k=k).retrieve(query)
+
+            # 进行 LLM 重排
+            if self.enable_rerank and self.llm_reranker is not None and nodes:
+                nodes = self.llm_reranker.postprocess_nodes(nodes, query_str=query)
+
+            # 截断（未开启重排时 nodes 已是 top_k；开启时 nodes 已是 rerank_top_n）
+            if not self.enable_rerank:
+                nodes = nodes[:top_k]
+
+            for n in nodes:
+                out[kind].append(
+                    {
+                        "score": float(getattr(n, "score", 0.0) or 0.0),
+                        "text": n.text or "",
+                        "metadata": n.metadata or {},
+                    }
+                )
+
+        _do_search(self.file_index, "file")
+        _do_search(self.func_index, "function")
+        _do_search(self.class_index, "class")
+        return out
