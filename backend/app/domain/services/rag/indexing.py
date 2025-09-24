@@ -4,9 +4,10 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
+from pathlib import Path
 
 # ---- LlamaIndex Core ----
-from llama_index.core import Document, VectorStoreIndex, Settings
+from llama_index.core import Document, VectorStoreIndex, Settings, StorageContext, load_index_from_storage
 
 # ---- OpenAI Embedding & LLM ----
 from llama_index.embeddings.openai import OpenAIEmbedding
@@ -71,6 +72,7 @@ class TripleRAG:
         enable_rerank: bool = False,
         rerank_top_n: int = 5,
         initial_candidates: int = 20,
+        persist_root_dir: Optional[str] = None,
     ) -> None:
         """
         :param embed_model_name: Embedding 模型（或 Azure 部署名）
@@ -100,6 +102,51 @@ class TripleRAG:
         self.class_index: Optional[VectorStoreIndex] = None
 
         self.report: Optional[RAGBuildReport] = None
+
+        # 设置持久化目录
+        self.persist_root_dir = self._resolve_persist_root(persist_root_dir)
+        self._ensure_dirs()
+
+        # 启动时尝试从磁盘加载已有索引
+        self._autoload_indexes()
+
+    # ---------- 持久化与加载辅助 ----------
+
+    def _resolve_persist_root(self, persist_root_dir: Optional[str]) -> str:
+        """Resolve persist directory; default to .rag_store under this module folder."""
+        if persist_root_dir:
+            return str(Path(persist_root_dir).expanduser().absolute())
+        module_dir = Path(__file__).parent
+        return str((module_dir / ".rag_store").absolute())
+
+    def _ensure_dirs(self) -> None:
+        Path(self._dir_for_kind("file")).mkdir(parents=True, exist_ok=True)
+        Path(self._dir_for_kind("function")).mkdir(parents=True, exist_ok=True)
+        Path(self._dir_for_kind("class")).mkdir(parents=True, exist_ok=True)
+
+    def _dir_for_kind(self, kind: str) -> str:
+        return str(Path(self.persist_root_dir) / kind)
+
+    def _persist_index(self, index: Optional[VectorStoreIndex], kind: str) -> None:
+        if index is None:
+            return
+        storage_dir = self._dir_for_kind(kind)
+        index.storage_context.persist(persist_dir=storage_dir)
+
+    def _load_index(self, kind: str) -> Optional[VectorStoreIndex]:
+        storage_dir = self._dir_for_kind(kind)
+        if not Path(storage_dir).exists():
+            return None
+        try:
+            storage_ctx = StorageContext.from_defaults(persist_dir=storage_dir)
+            return load_index_from_storage(storage_ctx)
+        except Exception:
+            return None
+
+    def _autoload_indexes(self) -> None:
+        self.file_index = self._load_index("file") or self.file_index
+        self.func_index = self._load_index("function") or self.func_index
+        self.class_index = self._load_index("class") or self.class_index
 
     # ---------- 建索引 ----------
 
@@ -143,6 +190,11 @@ class TripleRAG:
         self.file_index = VectorStoreIndex.from_documents(file_docs) if file_docs else None
         self.func_index = VectorStoreIndex.from_documents(func_docs) if func_docs else None
         self.class_index = VectorStoreIndex.from_documents(class_docs) if class_docs else None
+
+        # 持久化到磁盘
+        self._persist_index(self.file_index, "file")
+        self._persist_index(self.func_index, "function")
+        self._persist_index(self.class_index, "class")
 
         self.report = RAGBuildReport(
             files_total=len(files),
@@ -229,6 +281,7 @@ class RAGService:
         enable_rerank: bool = False,
         rerank_top_n: int = 5,
         initial_candidates: int = 20,
+        persist_root_dir: Optional[str] = None,
     ) -> None:
         # 组合底层 TripleRAG
         self._rag = TripleRAG(
@@ -237,6 +290,7 @@ class RAGService:
             enable_rerank=enable_rerank,
             rerank_top_n=rerank_top_n,
             initial_candidates=initial_candidates,
+            persist_root_dir=persist_root_dir,
         )
 
     def load_from_json(self, json_path: str) -> RAGBuildReport:
