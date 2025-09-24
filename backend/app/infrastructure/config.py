@@ -21,6 +21,10 @@ class Settings(BaseSettings):
     temperature: float = 0.7
     max_tokens: int = 2000
 
+    # RAG embedding/rerank configuration
+    embedding_model: str = "text-embedding-3-small"
+    ranking_model: str = "gpt-4o-mini"
+
     # Image model configuration
     image_api_key: str | None = None
     image_api_base: str = "https://api.openai.com/v1"

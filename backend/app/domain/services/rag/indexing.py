@@ -9,25 +9,16 @@ from pathlib import Path
 # ---- LlamaIndex Core ----
 from llama_index.core import Document, VectorStoreIndex, Settings, StorageContext, load_index_from_storage
 
-# ---- OpenAI Embedding & LLM ----
-from llama_index.embeddings.openai import OpenAIEmbedding
-from llama_index.llms.openai import OpenAI
-
 # ---- Postprocessor: LLM Rerank ----
 from llama_index.core.postprocessor import LLMRerank
 
 
-# ======= 在这里写死 OpenAI 配置（根据你的环境替换）=======
-OPENAI_API_KEY = "sk-8L8llDs3K8DZ7FOv00527a79Af714904A7D8C06a7e389d46"
-OPENAI_API_BASE = "https://api.shubiaobiao.cn/v1"     # 公有云；如用 Azure，改成你的 endpoint
-OPENAI_API_VERSION = None                          # Azure 才需要，如 "2024-02-15-preview"
-
-# Embedding 模型（公有云建议：text-embedding-3-small / -large；Azure 用部署名）
-DEFAULT_EMBED_MODEL = "text-embedding-3-small"
-
-# 用于 LLMRerank 的对话模型（推荐：gpt-4o-mini，性价比高）
-DEFAULT_LLM_MODEL_FOR_RERANK = "gpt-4o-mini"
-# ======================================================
+from app.infrastructure.external.llm.rag import (
+    init_openai_embedding,
+    init_openai_llm,
+    DEFAULT_EMBED_MODEL,
+    DEFAULT_LLM_MODEL_FOR_RERANK,
+)
 
 
 @dataclass
@@ -43,20 +34,7 @@ class RAGBuildReport:
     classes_skipped: int
 
 
-def _init_openai_embedding(model: str) -> None:
-    """初始化 OpenAI Embedding（写死配置，不依赖环境变量）"""
-    kwargs = dict(model=model, api_key=OPENAI_API_KEY, api_base=OPENAI_API_BASE)
-    if OPENAI_API_VERSION:
-        kwargs["api_version"] = OPENAI_API_VERSION
-    Settings.embed_model = OpenAIEmbedding(**kwargs)
-
-
-def _init_openai_llm(model: str) -> None:
-    """初始化用于 LLMRerank 的 OpenAI LLM（写死配置）"""
-    kwargs = dict(model=model, api_key=OPENAI_API_KEY, api_base=OPENAI_API_BASE)
-    if OPENAI_API_VERSION:
-        kwargs["api_version"] = OPENAI_API_VERSION
-    Settings.llm = OpenAI(**kwargs)
+# 模型初始化由 infrastructure 层统一提供
 
 
 class TripleRAG:
@@ -82,7 +60,7 @@ class TripleRAG:
         :param initial_candidates: 重排前每类索引召回的候选数（> rerank_top_n）
         """
         # 初始化 OpenAI Embedding（必须）
-        _init_openai_embedding(embed_model_name)
+        init_openai_embedding(embed_model_name)
 
         # 是否启用重排
         self.enable_rerank = enable_rerank
@@ -92,7 +70,7 @@ class TripleRAG:
         # 如果启用重排，则初始化 LLM & Reranker
         self.llm_reranker: Optional[LLMRerank] = None
         if self.enable_rerank:
-            _init_openai_llm(llm_model_for_rerank)
+            init_openai_llm(llm_model_for_rerank)
             # 使用全局 Settings.llm；这里也可传 llm=Settings.llm 显式绑定
             self.llm_reranker = LLMRerank(top_n=self.rerank_top_n)
 
