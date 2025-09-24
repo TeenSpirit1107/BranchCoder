@@ -240,6 +240,7 @@ class DescriptionGenerator:
                 # temperature=0.1,
                 messages=[{"role": "user", "content": prompt}],
             )
+            print(resp)
             try:
                 content = resp.choices[0].message.content  # type: ignore[attr-defined]
             except Exception as e:
@@ -321,6 +322,7 @@ class DescriptionGenerator:
                 )
                 described_classes_acc.append(described_class)
 
+        print('finished')
         # 直接构造最终结果，functions 与 classes 为列表
         final_result = DescribeOutput(
             files=file_descs,
