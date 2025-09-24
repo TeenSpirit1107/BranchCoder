@@ -47,7 +47,7 @@ class BranchCodeFlow(BaseFlow):
 
 
     async def run(self, message: str) -> AsyncGenerator[AgentEvent, None]:
-        # await self.rag_service.initiate('sample_workspace')
+        await self.rag_service.initiate('sample_workspace')
         result = await self.rag_service.retrival(message)
         logger.info(result)
         yield ReportEvent(message=str(result))
