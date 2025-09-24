@@ -214,6 +214,16 @@ class TripleRAG:
             data = json.load(f)
         return self.build_from_dict(data)
 
+    def build_from_model(self, obj: Any) -> RAGBuildReport:
+        """支持直接从 Pydantic/类似对象构建，自动使用 model_dump()/dict()。"""
+        if hasattr(obj, "model_dump") and callable(getattr(obj, "model_dump")):
+            data = obj.model_dump()
+        elif hasattr(obj, "dict") and callable(getattr(obj, "dict")):
+            data = obj.dict()
+        else:
+            raise TypeError("Unsupported object type: expected Pydantic-like with model_dump()/dict().")
+        return self.build_from_dict(data)
+
     # ---------- 检索 +（可选）重排 ----------
 
     def retrieve(
@@ -300,6 +310,10 @@ class RAGService:
     def load_from_dict(self, data: Dict[str, Any]) -> RAGBuildReport:
         """支持直接从内存字典构建。"""
         return self._rag.build_from_dict(data)
+
+    def load_from_model(self, obj: Any) -> RAGBuildReport:
+        """支持直接传入 Pydantic/类似对象（如 DescribeOutput）。"""
+        return self._rag.build_from_model(obj)
 
     def retrieve(self, query: str, top_k: int = 5) -> Dict[str, List[Dict[str, Any]]]:
         """对已构建的索引执行查询，返回 file/function/class 三类结果。"""
