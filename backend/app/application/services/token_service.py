@@ -166,7 +166,6 @@ class TokenService:
 
     def revoke_token(self, token: str) -> bool:
         """Revoke token (placeholder for token blacklist implementation)"""
-        # TODO:In a real implementation, you would add the token to a blacklist
         # stored in Redis or database with expiration time
         logger.warning(f"Token revoked (placeholder implementation)")
         return True

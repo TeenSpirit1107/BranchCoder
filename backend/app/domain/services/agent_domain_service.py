@@ -179,6 +179,6 @@ class AgentDomainService:
             logger.exception(f"Error in Session {session_id}")
             event = ErrorEvent(error=str(e))
             await self._session_repository.add_event(session_id, event)
-            yield event # TODO: raise api exception
+            yield event
         finally:
             await self._session_repository.update_unread_message_count(session_id, 0)
