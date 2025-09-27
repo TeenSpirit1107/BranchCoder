@@ -13,7 +13,7 @@ from llama_index.core import Document, VectorStoreIndex, StorageContext, load_in
 from llama_index.core.postprocessor import LLMRerank
 
 
-from app.infrastructure.external.llm.rag import (
+from app.infrastructure.external.llm.rag_model import (
     init_openai_embedding,
     init_openai_llm,
     DEFAULT_EMBED_MODEL,
@@ -37,7 +37,7 @@ class RAGBuildReport:
 # 模型初始化由 infrastructure 层统一提供
 
 
-class TripleRAG:
+class Indexing:
     """
     三套独立索引：file / function / class（仅用 description 建索引；缺失即跳过）
     可选：LLM Re-rank（基于 OpenAI 对话模型的交叉编码式重排）
@@ -272,7 +272,7 @@ class IndexingService:
         persist_root_dir: Optional[str] = None,
     ) -> None:
         # 组合底层 TripleRAG
-        self._rag = TripleRAG(
+        self._indexing = Indexing(
             embed_model_name=embed_model_name,
             llm_model_for_rerank=llm_model_for_rerank,
             enable_rerank=enable_rerank,
@@ -283,19 +283,19 @@ class IndexingService:
 
     def load_from_json(self, json_path: str) -> RAGBuildReport:
         """加载 describe_output.json 并构建三个索引。"""
-        return self._rag.build_from_json(json_path)
+        return self._indexing.build_from_json(json_path)
 
     def load_from_dict(self, data: Dict[str, Any]) -> RAGBuildReport:
         """支持直接从内存字典构建。"""
-        return self._rag.build_from_dict(data)
+        return self._indexing.build_from_dict(data)
 
     def load_from_model(self, obj: Any) -> RAGBuildReport:
         """支持直接传入 Pydantic/类似对象（如 DescribeOutput）。"""
-        return self._rag.build_from_model(obj)
+        return self._indexing.build_from_model(obj)
 
     def retrieve(self, query: str, top_k: int = 5) -> Dict[str, List[Dict[str, Any]]]:
         """对已构建的索引执行查询，返回 file/function/class 三类结果。"""
-        return self._rag.retrieve(query, top_k=top_k)
+        return self._indexing.retrieve(query, top_k=top_k)
 
     @staticmethod
     def pretty_print(results: Dict[str, Any]) -> None:
