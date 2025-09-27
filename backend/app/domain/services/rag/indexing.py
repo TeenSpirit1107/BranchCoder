@@ -251,7 +251,7 @@ class TripleRAG:
         return out
 
 
-class RAGService:
+class IndexingService:
     """
     高层封装：负责加载 `describe_output.json`、构建索引，并提供函数式的查询接口。
 

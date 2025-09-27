@@ -1,9 +1,9 @@
 import pytest
-from app.domain.services.rag.indexing import RAGService
+from app.domain.services.rag.indexing import IndexingService
 
 def test_rag_service_retrieve(tmp_path):
     # 初始化 RAGService
-    service = RAGService(
+    service = IndexingService(
         enable_rerank=True,
         rerank_top_n=5,
         initial_candidates=20,
@@ -28,4 +28,4 @@ def test_rag_service_retrieve(tmp_path):
         assert any(len(results.get(k, [])) for k in ("file", "function", "class"))
 
     # 3) 调试输出（pytest -s 时可见）
-    RAGService.pretty_print(results)
+    IndexingService.pretty_print(results)

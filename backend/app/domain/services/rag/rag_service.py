@@ -3,7 +3,7 @@ from typing import Optional
 
 from app.domain.external.llm import LLM
 from app.domain.services.rag.description_generator import DescriptionGenerator
-from app.domain.services.rag.indexing import RAGService
+from app.domain.services.rag.indexing import IndexingService
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +19,7 @@ class RagService:
         self.description_generator = DescriptionGenerator(
             llm=llm,
         )
-        self.indexing_service = RAGService(
+        self.indexing_service = IndexingService(
             enable_rerank=enable_rerank,
             rerank_top_n=rerank_top_n,
             initial_candidates=initial_candidates,
