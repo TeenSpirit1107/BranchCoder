@@ -33,20 +33,22 @@ backend/
 
 ## Core Features
 
-1. **AI Agent Management**: Create and manage AI Agent instances
-2. **Real-time Conversation**: Implement real-time conversation with the Agent through Server-Sent Events (SSE)
+1. **Session Management**: Create and manage conversation session instances
+2. **Real-time Conversation**: Implement real-time conversation through Server-Sent Events (SSE)
 3. **Tool Invocation**: Support for various tool calls, including:
    - Browser automation operations (using Playwright)
    - Shell command execution and viewing
    - File read/write operations
+   - Web search integration
 4. **Sandbox Environment**: Use Docker containers to provide isolated execution environments
 5. **VNC Visualization**: Support remote viewing of the sandbox environment via WebSocket connection
-6. **Web Search**: Support Google search integration (optional feature)
 
 ## Requirements
 
 - Python 3.9+
 - Docker 20.10+
+- MongoDB 4.4+
+- Redis 6.0+
 
 ## Installation and Configuration
 
@@ -83,6 +85,11 @@ SANDBOX_NAME_PREFIX=sandbox              # Sandbox container name prefix
 SANDBOX_TTL_MINUTES=30                   # Sandbox container time-to-live (minutes)
 SANDBOX_NETWORK=manus-network            # Docker network name for communication between sandbox containers
 
+# Database configuration
+MONGODB_URL=mongodb://localhost:27017    # MongoDB connection URL
+MONGODB_DATABASE=manus                   # MongoDB database name
+REDIS_URL=redis://localhost:6379/0       # Redis connection URL
+
 # Log configuration
 LOG_LEVEL=INFO                           # Log level, options: DEBUG, INFO, WARNING, ERROR, CRITICAL
 ```
@@ -112,10 +119,10 @@ docker run -p 8000:8000 --env-file .env -v /var/run/docker.sock:/var/run/docker.
 
 Base URL: `/api/v1`
 
-### 1. Create Agent
+### 1. Create Session
 
-- **Endpoint**: `POST /api/v1/agents`
-- **Description**: Create a new AI Agent instance
+- **Endpoint**: `PUT /api/v1/sessions`
+- **Description**: Create a new conversation session
 - **Request Body**: None
 - **Response**:
   ```json
@@ -123,63 +130,171 @@ Base URL: `/api/v1`
     "code": 0,
     "msg": "success",
     "data": {
-      "agent_id": "string",
-      "status": "created",
-      "message": "Agent created successfully"
+      "session_id": "string"
     }
   }
   ```
 
-### 2. Chat with Agent
+### 2. Get Session
 
-- **Endpoint**: `POST /api/v1/agents/{agent_id}/chat`
-- **Description**: Chat with a specified Agent
+- **Endpoint**: `GET /api/v1/sessions/{session_id}`
+- **Description**: Get session information including conversation history
+- **Path Parameters**:
+  - `session_id`: Session ID
+- **Response**:
+  ```json
+  {
+    "code": 0,
+    "msg": "success",
+    "data": {
+      "session_id": "string",
+      "title": "string",
+      "events": []
+    }
+  }
+  ```
+
+### 3. List All Sessions
+
+- **Endpoint**: `GET /api/v1/sessions`
+- **Description**: Get list of all sessions
+- **Response**:
+  ```json
+  {
+    "code": 0,
+    "msg": "success",
+    "data": {
+      "sessions": [
+        {
+          "session_id": "string",
+          "title": "string",
+          "latest_message": "string",
+          "latest_message_at": 1234567890,
+          "status": "string",
+          "unread_message_count": 0
+        }
+      ]
+    }
+  }
+  ```
+
+### 4. Delete Session
+
+- **Endpoint**: `DELETE /api/v1/sessions/{session_id}`
+- **Description**: Delete a session
+- **Path Parameters**:
+  - `session_id`: Session ID
+- **Response**:
+  ```json
+  {
+    "code": 0,
+    "msg": "success",
+    "data": null
+  }
+  ```
+
+### 5. Stop Session
+
+- **Endpoint**: `POST /api/v1/sessions/{session_id}/stop`
+- **Description**: Stop an active session
+- **Path Parameters**:
+  - `session_id`: Session ID
+- **Response**:
+  ```json
+  {
+    "code": 0,
+    "msg": "success",
+    "data": null
+  }
+  ```
+
+### 6. Chat with Session
+
+- **Endpoint**: `POST /api/v1/sessions/{session_id}/chat`
+- **Description**: Send a message to the session and receive streaming response
+- **Path Parameters**:
+  - `session_id`: Session ID
 - **Request Body**:
   ```json
   {
     "message": "User message content",
-    "timestamp": 1234567890
+    "timestamp": 1234567890,
+    "event_id": "optional event ID"
   }
   ```
 - **Response**: Server-Sent Events (SSE) stream
 - **Event Types**:
-  - `message`: Text message
-  - `title`: Title information
-  - `plan`: Plan steps
-  - `step`: Step status
-  - `tool`: Tool invocation
+  - `message`: Text message from assistant
+  - `title`: Session title update
+  - `plan`: Execution plan with steps
+  - `step`: Step status update
+  - `tool`: Tool invocation information
   - `error`: Error information
-  - `done`: Flow completion
+  - `done`: Conversation completion
 
-### 3. View Shell Session Content
+### 7. View Shell Session Content
 
-- **Endpoint**: `POST /api/v1/agents/{agent_id}/shell`
-- **Description**: View the Shell session content of a specified Agent
+- **Endpoint**: `POST /api/v1/sessions/{session_id}/shell`
+- **Description**: View shell session output in the sandbox environment
+- **Path Parameters**:
+  - `session_id`: Session ID
 - **Request Body**:
   ```json
   {
     "session_id": "shell session ID"
   }
   ```
-- **Response**: Shell session content
+- **Response**:
+  ```json
+  {
+    "code": 0,
+    "msg": "success",
+    "data": {
+      "output": "shell output content",
+      "session_id": "shell session ID",
+      "console": [
+        {
+          "ps1": "prompt string",
+          "command": "executed command",
+          "output": "command output"
+        }
+      ]
+    }
+  }
+  ```
 
-### 4. View File Content
+### 8. View File Content
 
-- **Endpoint**: `POST /api/v1/agents/{agent_id}/file`
-- **Description**: View file content in the specified Agent's sandbox environment
+- **Endpoint**: `POST /api/v1/sessions/{session_id}/file`
+- **Description**: View file content in the sandbox environment
+- **Path Parameters**:
+  - `session_id`: Session ID
 - **Request Body**:
   ```json
   {
     "file": "file path"
   }
   ```
-- **Response**: File content
+- **Response**:
+  ```json
+  {
+    "code": 0,
+    "msg": "success",
+    "data": {
+      "content": "file content",
+      "file": "file path"
+    }
+  }
+  ```
 
-### 5. VNC Connection
+### 9. VNC Connection
 
-- **Endpoint**: `WebSocket /api/v1/agents/{agent_id}/vnc`
-- **Description**: Establish a VNC WebSocket connection to the Agent's sandbox environment
+- **Endpoint**: `WebSocket /api/v1/sessions/{session_id}/vnc`
+- **Description**: Establish a VNC WebSocket connection to the session's sandbox environment
+- **Path Parameters**:
+  - `session_id`: Session ID
 - **Protocol**: WebSocket (binary mode)
+- **Subprotocol**: `binary`
 
 ## Error Handling
 

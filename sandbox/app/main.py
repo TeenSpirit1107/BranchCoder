@@ -14,10 +14,7 @@ from app.core.exceptions import (
     validation_exception_handler,
     general_exception_handler
 )
-from app.services.mcp_fastmcp import fastmcp_service
-from app.services.browser import browser_service
-
-from contextlib import asynccontextmanager
+from app.core.middleware import auto_extend_timeout_middleware
 
 # Configure logging
 def setup_logging():
@@ -46,36 +43,11 @@ def setup_logging():
     logging.info("Sandbox logging system initialized with level: %s", settings.LOG_LEVEL)
 
 # Initialize logging
+setup_logging()
 logger = logging.getLogger(__name__)
-
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """应用生命周期管理器"""
-    # 启动事件
-    setup_logging()
-    logger.info("Sandbox API server startup completed")
-    logger.info("MCP service ready for server management")
-
-    yield
-
-    logger.info("Sandbox API server shutting down")
-    try:
-        await fastmcp_service.shutdown_all()
-        logger.info("MCP service shutdown completed")
-    except Exception as e:
-        logger.error(f"Error during MCP service shutdown: {e}")
-    try:
-        await browser_service.shutdown()
-        logger.info("Browser service shutdown completed")
-    except Exception as e:
-        logger.error(f"Error during Browser service shutdown: {e}")
-    logger.info("Sandbox API server shutdown completed")
-
 
 app = FastAPI(
     version="1.0.0",
-    lifespan=lifespan
 )
 
 # Set up CORS
@@ -89,6 +61,9 @@ app.add_middleware(
 
 logger.info("Sandbox API server starting")
 
+# Register middleware
+app.middleware("http")(auto_extend_timeout_middleware)
+
 # Register exception handlers
 app.add_exception_handler(AppException, app_exception_handler)
 app.add_exception_handler(StarletteHTTPException, http_exception_handler)
@@ -97,7 +72,5 @@ app.add_exception_handler(Exception, general_exception_handler)
 
 # Register routes
 app.include_router(api_router, prefix="/api/v1")
-
-
 
 logger.info("Sandbox API routes registered and server ready")

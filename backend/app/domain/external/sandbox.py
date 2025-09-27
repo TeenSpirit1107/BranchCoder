@@ -1,10 +1,14 @@
-from typing import Optional, Protocol, Dict
-
+from typing import Any, Optional, Protocol, BinaryIO
 from app.domain.models.tool_result import ToolResult
-
+from app.domain.external.browser import Browser
+from app.domain.external.llm import LLM
 
 class Sandbox(Protocol):
     """Sandbox service gateway interface"""
+
+    async def ensure_sandbox(self) -> None:
+        """Ensure sandbox is ready"""
+        ...
     
     async def exec_command(
         self,
@@ -24,12 +28,13 @@ class Sandbox(Protocol):
         """
         ...
     
-    async def view_shell(self, session_id: str) -> ToolResult:
+    async def view_shell(self, session_id: str, console: bool = False) -> ToolResult:
         """View shell status
         
         Args:
             session_id: Session ID
-            
+            console: Whether to return console records
+
         Returns:
             Shell status information
         """
@@ -212,163 +217,81 @@ class Sandbox(Protocol):
         ...
     
     async def file_upload(
-        self, 
-        file_path: str, 
-        content: bytes, 
-        make_executable: bool = False
+        self,
+        file_data: BinaryIO,
+        path: str,
+        filename: str = None
     ) -> ToolResult:
-        """Upload file
+        """Upload file to sandbox
         
         Args:
-            file_path: Target file path in sandbox
-            content: Binary file content
-            make_executable: Whether to make file executable
+            file_data: File content as binary stream
+            path: Target file path in sandbox
+            filename: Original filename (optional)
             
         Returns:
-            Upload result
+            Upload operation result
+        """
+        ...
+    
+    async def file_download(
+        self,
+        path: str
+    ) -> BinaryIO:
+        """Download file from sandbox
+        
+        Args:
+            path: File path in sandbox
+            
+        Returns:
+            File content as binary stream
+        """
+        ...
+    
+    async def destroy(self) -> bool:
+        """Destroy current sandbox instance
+        
+        Returns:
+            Whether destroyed successfully
+        """
+        ...
+    
+    async def get_browser(self) -> Browser:
+        """Get browser instance
+        
+        Returns:
+            Browser: Returns a configured browser instance for web automation
         """
         ...
 
-    async def file_download(self, file_path: str) -> bytes:
-        """Download file
-        
-        Args:
-            file_path: File path in sandbox
-            
-        Returns:
-            Binary file content
-            
-        Raises:
-            FileNotFoundError: When file does not exist
-            PermissionError: When permission is denied
-            Exception: Other errors
-        """
+    @property
+    def id(self) -> str:
+        """Sandbox ID"""
         ...
 
-    async def get_status(self) -> ToolResult:
-        """Get sandbox status, check if all services are running properly
-        
-        Returns:
-            Sandbox status information
-        """
+    @property
+    def cdp_url(self) -> str:
+        """CDP URL"""
         ...
 
-    async def ensure_status(self) -> ToolResult:
-        """Ensure sandbox status is normal
-        
-        Returns:
-            Sandbox status
-        """
+    @property
+    def vnc_url(self) -> str:
+        """VNC URL"""
         ...
     
-    def get_cdp_url(self) -> str:
-        """Get Chrome DevTools Protocol URL
-        
-        Returns:
-            CDP URL string
-        """
+    @classmethod
+    async def create(cls) -> 'Sandbox':
+        """Create a new sandbox instance"""
         ...
     
-    def get_vnc_url(self) -> str:
-        """Get VNC URL
-        
-        Returns:
-            VNC URL string
-        """
-        ...
-
-    def get_code_server_url(self) -> str:
-        """Get Code Server URL
-        
-        Returns:
-            Code Server URL string
-        """
-        ...
-    
-    # MCP Service Management Methods
-    async def mcp_install(
-        self, 
-        pkg: str, 
-        lang: str, 
-        args: Optional[list] = None
-    ) -> ToolResult:
-        """Install and start MCP server
+    @classmethod
+    async def get(cls, id: str) -> 'Sandbox':
+        """Get sandbox by ID
         
         Args:
-            pkg: MCP package name
-            lang: Programming language type ("python" or "node")
-            args: Optional startup arguments list
+            id: Sandbox ID
             
         Returns:
-            Installation result
+            Sandbox instance
         """
         ...
-    
-    async def mcp_uninstall(self, pkg: str) -> ToolResult:
-        """Stop and uninstall MCP server
-        
-        Args:
-            pkg: MCP package name
-            
-        Returns:
-            Uninstallation result
-        """
-        ...
-    
-    async def mcp_list_servers(self) -> ToolResult:
-        """List all installed MCP servers
-        
-        Returns:
-            Server list result with status information for each server
-        """
-        ...
-    
-    async def mcp_health_check(self, pkg: str) -> ToolResult:
-        """Check MCP server health status
-        
-        Args:
-            pkg: MCP package name
-            
-        Returns:
-            Health status result
-        """
-        ...
-    
-    async def mcp_proxy_request(
-        self, 
-        pkg: str, 
-        request: Dict
-    ) -> ToolResult:
-        """Proxy JSON-RPC request to MCP server
-        
-        Args:
-            pkg: Target MCP server package name
-            request: JSON-RPC request data
-            
-        Returns:
-            Server response result
-        """
-        ...
-    
-    async def mcp_get_capabilities(self, pkg: str) -> ToolResult:
-        """Get MCP server capability information
-        
-        Args:
-            pkg: MCP package name
-            
-        Returns:
-            Server capability information result
-        """
-        ...
-    
-    async def mcp_shutdown_all(self) -> ToolResult:
-        """Shutdown all MCP servers
-        
-        Returns:
-            Shutdown operation result
-        """
-        ...
-    
-    async def close(self):
-        """Close gateway connection and clean up resources"""
-        ... 

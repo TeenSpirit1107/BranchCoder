@@ -1,28 +1,37 @@
-from pydantic import BaseModel, Field
-from typing import Optional
+from typing import Optional, Dict
+from datetime import datetime, UTC
+from pydantic import BaseModel, Field, field_validator
 from app.domain.models.memory import Memory
-from app.domain.models.environment import Environment
 import uuid
 
 class Agent(BaseModel):
-    """Agent domain model."""
-    
+    """
+    Agent aggregate root that manages the lifecycle and state of an AI agent
+    Including its execution context, memory, and current plan
+    """
     id: str = Field(default_factory=lambda: uuid.uuid4().hex[:16])
-    planner_memory: Memory
-    execution_memory: Memory
-    model_name: str
-    temperature: float = 0.7
-    max_tokens: Optional[int] = None
-    user_id: Optional[str] = None
-    environment: Optional[Environment] = None
+    memories: Dict[str, Memory] = Field(default_factory=dict)
+    model_name: str = Field(default="")
+    temperature: float = Field(default=0.7)
+    max_tokens: int = Field(default=2000)
     
-    def __init__(self, id: Optional[str] = None, **data):
-        """初始化Agent，支持传入自定义ID
-        
-        Args:
-            id: 可选的自定义ID，如果不提供则自动生成
-            **data: 其他Agent属性
-        """
-        if id is not None:
-            data['id'] = id
-        super().__init__(**data)
+    # Context related fields
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))  # Creation timestamp
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))  # Last update timestamp
+
+    @field_validator("temperature")
+    def validate_temperature(cls, v: float) -> float:
+        """Validate temperature is between 0 and 1"""
+        if not 0 <= v <= 1:
+            raise ValueError("Temperature must be between 0 and 1")
+        return v
+
+    @field_validator("max_tokens")
+    def validate_max_tokens(cls, v: Optional[int]) -> Optional[int]:
+        """Validate max_tokens is positive if provided"""
+        if v is not None and v <= 0:
+            raise ValueError("Max tokens must be positive")
+        return v
+
+    class Config:
+        arbitrary_types_allowed = True

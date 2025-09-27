@@ -111,19 +111,21 @@ LOG_LEVEL=DEBUG
 - **接口**: `POST /api/v1/shell/exec`
 - **描述**: 在指定的 shell 会话中执行命令
 - **请求体**:
+
   ```json
   {
-    "id": "session_id",  /* 可选，不提供则自动创建 */
-    "exec_dir": "/path/to/dir",  /* 执行目录 */
-    "command": "ls -la",  /* 要执行的命令 */
-    "sudo": false  /* 可选，是否使用sudo执行 */
+    "id": "session_id",  /* 可选，不提供则自动创建会话ID */
+    "exec_dir": "/path/to/dir",  /* 可选，命令执行的工作目录（必须使用绝对路径） */
+    "command": "ls -la"  /* 要执行的命令 */
   }
   ```
+
+
 - **响应**:
   ```json
   {
     "success": true,
-    "message": "命令已执行",
+    "message": "Command executed",
     "data": {
       "session_id": "session_id",
       "command": "ls -la",
@@ -135,7 +137,7 @@ LOG_LEVEL=DEBUG
 #### 查看 Shell 会话内容
 
 - **接口**: `POST /api/v1/shell/view`
-- **描述**: 查看指定 shell 会话的内容
+- **描述**: 查看指定 shell 会话的输出内容
 - **请求体**:
   ```json
   {
@@ -146,19 +148,90 @@ LOG_LEVEL=DEBUG
   ```json
   {
     "success": true,
-    "message": "查询成功",
+    "message": "Session content retrieved successfully",
     "data": {
-      "content": "会话输出内容",
-      "session_id": "session_id"
+      "output": "会话输出内容",
+      "session_id": "session_id",
+      "console": [
+        {
+          "ps1": "user@host:~/dir $",
+          "command": "ls -la",
+          "output": "文件列表输出"
+        }
+      ]
     }
   }
   ```
 
-#### 其它Shell操作
+#### 等待进程
 
-- **等待进程**: `POST /api/v1/shell/wait`
-- **写入输入**: `POST /api/v1/shell/write`
-- **终止进程**: `POST /api/v1/shell/kill`
+- **接口**: `POST /api/v1/shell/wait`
+- **描述**: 等待指定会话中的进程完成
+- **请求体**:
+  ```json
+  {
+    "id": "session_id",  /* 目标会话ID */
+    "seconds": 10  /* 可选，等待时间（秒） */
+  }
+  ```
+- **响应**:
+  ```json
+  {
+    "success": true,
+    "message": "Process completed, return code: 0",
+    "data": {
+      "session_id": "session_id",
+      "returncode": 0,
+      "status": "completed"
+    }
+  }
+  ```
+
+#### 写入输入
+
+- **接口**: `POST /api/v1/shell/write`
+- **描述**: 向指定会话中的进程写入输入
+- **请求体**:
+  ```json
+  {
+    "id": "session_id",  /* 目标会话ID */
+    "input": "example input",  /* 写入的内容 */
+    "press_enter": true  /* 是否在输入后模拟按下回车键 */
+  }
+  ```
+- **响应**:
+  ```json
+  {
+    "success": true,
+    "message": "Input written",
+    "data": {
+      "session_id": "session_id",
+      "input": "example input"
+    }
+  }
+  ```
+
+#### 终止进程
+
+- **接口**: `POST /api/v1/shell/kill`
+- **描述**: 终止指定会话中的进程
+- **请求体**:
+  ```json
+  {
+    "id": "session_id"  /* 目标会话ID */
+  }
+  ```
+- **响应**:
+  ```json
+  {
+    "success": true,
+    "message": "Process terminated",
+    "data": {
+      "session_id": "session_id",
+      "status": "terminated"
+    }
+  }
+  ```
 
 ### 2. 文件操作接口
 
@@ -169,17 +242,17 @@ LOG_LEVEL=DEBUG
 - **请求体**:
   ```json
   {
-    "file": "/path/to/file",  /* 文件路径 */
-    "start_line": 1,  /* 可选，开始行 */
-    "end_line": 100,  /* 可选，结束行 */
-    "sudo": false  /* 可选，是否使用sudo读取 */
+    "file": "/path/to/file",  /* 文件绝对路径 */
+    "start_line": 0,  /* 可选，起始行（从0开始计数） */
+    "end_line": 100,  /* 可选，结束行（不包含该行） */
+    "sudo": false  /* 可选，是否使用sudo权限读取 */
   }
   ```
 - **响应**:
   ```json
   {
     "success": true,
-    "message": "文件读取成功",
+    "message": "File read successfully",
     "data": {
       "content": "文件内容",
       "line_count": 100,
@@ -195,17 +268,105 @@ LOG_LEVEL=DEBUG
 - **请求体**:
   ```json
   {
-    "file": "/path/to/file",  /* 文件路径 */
+    "file": "/path/to/file",  /* 文件绝对路径 */
     "content": "文件内容",  /* 要写入的内容 */
-    "sudo": false  /* 可选，是否使用sudo写入 */
+    "append": false,  /* 可选，是否使用追加模式 */
+    "leading_newline": false,  /* 可选，是否在内容前添加换行符 */
+    "trailing_newline": false,  /* 可选，是否在内容后添加换行符 */
+    "sudo": false  /* 可选，是否使用sudo权限写入 */
+  }
+  ```
+- **响应**:
+  ```json
+  {
+    "success": true,
+    "message": "File written successfully",
+    "data": {
+      "file": "/path/to/file",
+      "bytes_written": 123
+    }
   }
   ```
 
-#### 其它文件操作
+#### 替换文件内容
 
-- **替换文件内容**: `POST /api/v1/file/replace`
-- **搜索文件内容**: `POST /api/v1/file/search`
-- **查找文件**: `POST /api/v1/file/find`
+- **接口**: `POST /api/v1/file/replace`
+- **描述**: 替换文件中的字符串
+- **请求体**:
+  ```json
+  {
+    "file": "/path/to/file",  /* 文件绝对路径 */
+    "old_str": "原字符串",  /* 要替换的原始字符串 */
+    "new_str": "新字符串",  /* 替换后的新字符串 */
+    "sudo": false  /* 可选，是否使用sudo权限 */
+  }
+  ```
+- **响应**:
+  ```json
+  {
+    "success": true,
+    "message": "Replacement completed, replaced 5 occurrences",
+    "data": {
+      "file": "/path/to/file",
+      "replaced_count": 5
+    }
+  }
+  ```
+
+#### 搜索文件内容
+
+- **接口**: `POST /api/v1/file/search`
+- **描述**: 使用正则表达式搜索文件内容
+- **请求体**:
+  ```json
+  {
+    "file": "/path/to/file",  /* 文件绝对路径 */
+    "regex": "search pattern",  /* 正则表达式模式 */
+    "sudo": false  /* 可选，是否使用sudo权限 */
+  }
+  ```
+- **响应**:
+  ```json
+  {
+    "success": true,
+    "message": "Search completed, found 3 matches",
+    "data": {
+      "file": "/path/to/file",
+      "matches": [
+        {
+          "line_number": 10,
+          "line": "匹配的行内容",
+          "match": "匹配的内容"
+        }
+      ]
+    }
+  }
+  ```
+
+#### 查找文件
+
+- **接口**: `POST /api/v1/file/find`
+- **描述**: 根据文件名模式查找文件
+- **请求体**:
+  ```json
+  {
+    "path": "/path/to/dir",  /* 要搜索的目录路径 */
+    "glob": "*.txt"  /* 文件名模式（glob语法） */
+  }
+  ```
+- **响应**:
+  ```json
+  {
+    "success": true,
+    "message": "Search completed, found 5 files",
+    "data": {
+      "files": [
+        "/path/to/dir/file1.txt",
+        "/path/to/dir/file2.txt"
+      ]
+    }
+  }
+  ```
 
 ### 3. 进程管理接口
 
@@ -213,15 +374,141 @@ LOG_LEVEL=DEBUG
 
 - **接口**: `GET /api/v1/supervisor/status`
 - **描述**: 获取所有服务进程状态
+- **响应**:
+  ```json
+  {
+    "success": true,
+    "message": "Services status retrieved successfully",
+    "data": [
+      {
+        "name": "chrome",
+        "status": "RUNNING",
+        "description": "pid 123, uptime 10:30:45"
+      }
+    ]
+  }
+  ```
 
-#### 重启服务
+#### 停止所有服务
+
+- **接口**: `POST /api/v1/supervisor/stop`
+- **描述**: 停止所有服务
+- **响应**:
+  ```json
+  {
+    "success": true,
+    "message": "All services stopped",
+    "data": {
+      "status": "stopped"
+    }
+  }
+  ```
+
+#### 关闭 Supervisor
+
+- **接口**: `POST /api/v1/supervisor/shutdown`
+- **描述**: 仅关闭 supervisord 服务本身
+- **响应**:
+  ```json
+  {
+    "success": true,
+    "message": "Supervisord service shutdown",
+    "data": {
+      "status": "shutdown"
+    }
+  }
+  ```
+
+#### 重启所有服务
 
 - **接口**: `POST /api/v1/supervisor/restart`
-- **描述**: 重启指定服务
+- **描述**: 重启所有服务
+- **响应**:
+  ```json
+  {
+    "success": true,
+    "message": "All services restarted",
+    "data": {
+      "status": "restarted"
+    }
+  }
+  ```
+
+#### 激活超时
+
+- **接口**: `POST /api/v1/supervisor/timeout/activate`
+- **描述**: 重置超时功能，在指定时间后自动关闭所有服务
 - **请求体**:
   ```json
   {
-    "service": "chrome"  /* 服务名称 */
+    "minutes": 60  /* 可选，超时时间（分钟），若不提供则使用系统默认配置 */
+  }
+  ```
+- **响应**:
+  ```json
+  {
+    "success": true,
+    "message": "Timeout reset, all services will be shut down after 60 minutes",
+    "data": {
+      "timeout_minutes": 60,
+      "timeout_timestamp": "2023-07-01T12:34:56",
+      "status": "timeout_set"
+    }
+  }
+  ```
+
+#### 延长超时
+
+- **接口**: `POST /api/v1/supervisor/timeout/extend`
+- **描述**: 延长超时时间
+- **请求体**:
+  ```json
+  {
+    "minutes": 30  /* 可选，延长的分钟数，若不提供则使用系统默认配置 */
+  }
+  ```
+- **响应**:
+  ```json
+  {
+    "success": true,
+    "message": "Timeout extended, all services will be shut down after 90 minutes",
+    "data": {
+      "timeout_minutes": 90,
+      "timeout_timestamp": "2023-07-01T14:04:56",
+      "status": "timeout_extended"
+    }
+  }
+  ```
+
+#### 取消超时
+
+- **接口**: `POST /api/v1/supervisor/timeout/cancel`
+- **描述**: 取消超时功能
+- **响应**:
+  ```json
+  {
+    "success": true,
+    "message": "Timeout cancelled",
+    "data": {
+      "status": "timeout_cancelled"
+    }
+  }
+  ```
+
+#### 获取超时状态
+
+- **接口**: `GET /api/v1/supervisor/timeout/status`
+- **描述**: 获取超时功能的状态
+- **响应**:
+  ```json
+  {
+    "success": true,
+    "message": "Remaining time: 45 minutes",
+    "data": {
+      "active": true,
+      "timeout_timestamp": "2023-07-01T14:04:56",
+      "remaining_seconds": 2700
+    }
   }
   ```
 

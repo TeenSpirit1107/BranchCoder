@@ -1,315 +1,180 @@
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, BinaryIO
 import uuid
 import httpx
 import docker
 import socket
 import logging
 import asyncio
-import os
-import random
-from app.infrastructure.config import get_settings
-from urllib.parse import urlparse
+import io
+from async_lru import alru_cache
+from app.core.config import get_settings
 from app.domain.models.tool_result import ToolResult
-from app.infrastructure.external.sandbox.sandbox_interface import SandboxInterface
+from app.domain.external.sandbox import Sandbox
+from app.infrastructure.external.browser.playwright_browser import PlaywrightBrowser
+from app.domain.external.browser import Browser
+from app.domain.external.llm import LLM
 
 logger = logging.getLogger(__name__)
 
-class DockerSandbox(SandboxInterface):
-    def __init__(
-            self, 
-            container_name: str, 
-            ip: str = None, 
-            api_server_port: int = 8080, 
-            vnc_port: int = 5901, 
-            cdp_port: int = 9222, 
-            code_server_port: int = 8443,
-            user_id: Optional[str] = None, 
-            environment_variables: Optional[Dict[str, str]] = None
-        ):
+class DockerSandbox(Sandbox):
+    def __init__(self, ip: str = None, container_name: str = None):
         """Initialize Docker sandbox and API interaction client"""
-        self.container_name = container_name
         self.client = httpx.AsyncClient(timeout=600)
         self.ip = ip
-        self.base_url = f"http://{self.ip}:{api_server_port}"
-        self.vnc_url = f"ws://{self.ip}:{vnc_port}"
-        self.cdp_url = f"http://{self.ip}:{cdp_port}"
-        self.code_server_url = f"http://{self.ip}:{code_server_port}"
-        self.user_id = user_id
-        self.environment_variables = environment_variables or {}
-
-    @staticmethod
-    def _create_docker_client(settings):
-        """创建Docker客户端连接
-        
-        支持本地和远程Docker主机连接，支持TLS认证
-        优先使用配置中的设置，如果未配置则尝试使用环境变量
-        
-        Args:
-            settings: 应用配置
-            
-        Returns:
-            Docker客户端实例
-        """
-        # 检查是否使用远程Docker主机
-        docker_url = settings.docker_host_url
-        
-        # 如果未配置docker_host_url，但存在DOCKER_HOST环境变量，则使用环境变量
-        if not docker_url and os.environ.get('DOCKER_HOST'):
-            docker_url = os.environ.get('DOCKER_HOST')
-            logger.info(f"Using DOCKER_HOST from environment: {docker_url}")
-            
-        if docker_url:
-            # 连接到远程Docker主机
-            docker_client = docker.DockerClient(
-                base_url=docker_url, 
-                timeout=settings.docker_timeout or 120
-            )
-            logger.info(f"Connected to remote Docker host: {docker_url}")
-        else:
-            # 使用from_env()从环境变量中读取配置连接到Docker
-            docker_client = docker.from_env()
-            logger.info("Connected to local Docker host using environment configuration")
-            
-        # 测试docker连接是否正常
-        try:
-            docker_client.ping()
-            logger.info("Docker connection test passed")
-        except Exception as e:
-            logger.error(f"Docker connection test failed: {str(e)}")
-            raise Exception(f"Docker connection test failed: {str(e)}")
-        return docker_client
-
-    @staticmethod
-    async def get_or_create(sandbox_id: str, user_id: Optional[str] = None, environment_variables: Optional[Dict[str, str]] = None) -> 'DockerSandbox':
-        """获取或创建Docker沙箱，支持持久化存储卷
-        
-        Args:
-            sandbox_id: 沙箱ID，用作容器名和存储卷名
-            user_id: 可选的用户ID
-            environment_variables: 可选的环境变量字典
-            
-        Returns:
-            DockerSandbox实例
-        """
-        return await asyncio.to_thread(DockerSandbox._get_or_create_task, sandbox_id, user_id, environment_variables)
+        self.base_url = f"http://{self.ip}:8080"
+        self._vnc_url = f"ws://{self.ip}:5901"
+        self._cdp_url = f"http://{self.ip}:9222"
+        self._container_name = container_name
     
+    @property
+    def id(self) -> str:
+        """Sandbox ID"""
+        if not self._container_name:
+            return "dev-sandbox"
+        return self._container_name
+    
+    
+    @property
+    def cdp_url(self) -> str:
+        return self._cdp_url
+
+    @property
+    def vnc_url(self) -> str:
+        return self._vnc_url
+
     @staticmethod
-    def _get_or_create_task(sandbox_id: str, user_id: Optional[str] = None, environment_variables: Optional[Dict[str, str]] = None) -> 'DockerSandbox':
-        """获取或创建Docker沙箱的同步实现
+    def _get_container_ip(container) -> str:
+        """Get container IP address from network settings
         
         Args:
-            sandbox_id: 沙箱ID，用作容器名和存储卷名
-            user_id: 可选的用户ID
-            environment_variables: 可选的环境变量字典
+            container: Docker container instance
             
         Returns:
-            DockerSandbox实例
+            Container IP address
         """
-        settings = get_settings()
+        # Get container network settings
+        network_settings = container.attrs['NetworkSettings']
+        ip_address = network_settings['IPAddress']
         
-        # 使用sandbox_id作为容器名和存储卷名
-        container_name = f"{settings.sandbox_name_prefix}-{sandbox_id}"
-        volume_name = f"{settings.sandbox_name_prefix}-vol-{sandbox_id}"
+        # If default network has no IP, try to get IP from other networks
+        if not ip_address and 'Networks' in network_settings:
+            networks = network_settings['Networks']
+            # Try to get IP from first available network
+            for network_name, network_config in networks.items():
+                if 'IPAddress' in network_config and network_config['IPAddress']:
+                    ip_address = network_config['IPAddress']
+                    break
+        
+        return ip_address
+
+    @staticmethod
+    def _create_task() -> 'DockerSandbox':
+        """Create a new Docker sandbox (static method)
+        
+        Args:
+            image: Docker image name
+            name_prefix: Container name prefix
+            
+        Returns:
+            DockerSandbox instance
+        """
+        # Use configured default values
+        settings = get_settings()
+
+        image = settings.sandbox_image
+        name_prefix = settings.sandbox_name_prefix
+        container_name = f"{name_prefix}-{str(uuid.uuid4())[:8]}"
         
         try:
-            # 创建Docker客户端
-            docker_client = DockerSandbox._create_docker_client(settings)
-            
-            # 判断是否为远程Docker
-            is_remote_docker = settings.docker_host_url or os.environ.get('DOCKER_HOST')
-            
-            # 检查容器是否已存在且正在运行
-            try:
-                existing_container = docker_client.containers.get(container_name)
-                if existing_container.status == 'running':
-                    logger.info(f"Found existing running container: {container_name}")
-                    
-                    # 获取容器IP地址
-                    existing_container.reload()
-                    network_settings = existing_container.attrs['NetworkSettings']
-                    ip_address = network_settings['IPAddress']
-                    
-                    # 如果默认网络没有IP，尝试从其他网络获取IP
-                    if not ip_address and 'Networks' in network_settings:
-                        networks = network_settings['Networks']
-                        for network_name, network_config in networks.items():
-                            if 'IPAddress' in network_config and network_config['IPAddress']:
-                                ip_address = network_config['IPAddress']
-                                break
-                    
-                    # 对于远程Docker，使用配置的远程地址
-                    if is_remote_docker and settings.sandbox_remote_address:
-                        # 获取端口映射
-                        ports = existing_container.attrs['NetworkSettings']['Ports']
-                        api_server_port = int(ports['8080/tcp'][0]['HostPort']) if ports.get('8080/tcp') else 8080
-                        vnc_port = int(ports['5901/tcp'][0]['HostPort']) if ports.get('5901/tcp') else 5901
-                        cdp_port = int(ports['9222/tcp'][0]['HostPort']) if ports.get('9222/tcp') else 9222
-                        code_server_port = int(ports['8443/tcp'][0]['HostPort']) if ports.get('8443/tcp') else 8443
+            # Create Docker client
+            docker_client = docker.from_env()
 
-                        return DockerSandbox(
-                            container_name=container_name,
-                            ip=settings.sandbox_remote_address,
-                            api_server_port=api_server_port,
-                            vnc_port=vnc_port,
-                            cdp_port=cdp_port,
-                            code_server_port=code_server_port,
-                            user_id=user_id,
-                            environment_variables=environment_variables
-                        )
-                    
-                    return DockerSandbox(
-                        container_name=container_name,
-                        ip=ip_address,
-                        user_id=user_id,
-                        environment_variables=environment_variables
-                    )
-                else:
-                    # 容器存在但未运行，删除它
-                    logger.info(f"Found stopped container {container_name}, removing it")
-                    existing_container.remove(force=True)
-            except docker.errors.NotFound:
-                # 容器不存在，继续创建新容器
-                logger.info(f"Container {container_name} not found, creating new one")
-                pass
-            
-            # 确保存储卷存在
-            try:
-                volume = docker_client.volumes.get(volume_name)
-                logger.info(f"Found existing volume: {volume_name}")
-            except docker.errors.NotFound:
-                # 创建新的存储卷
-                volume = docker_client.volumes.create(
-                    name=volume_name,
-                    driver='local'
-                )
-                logger.info(f"Created new volume: {volume_name}")
-
-            # 准备环境变量
-            env_vars = {
-                "SERVICE_TIMEOUT_MINUTES": settings.sandbox_ttl_minutes,
-                "CHROME_ARGS": settings.sandbox_chrome_args,
-                "HTTPS_PROXY": settings.sandbox_https_proxy,
-                "HTTP_PROXY": settings.sandbox_http_proxy,
-                "NO_PROXY": settings.sandbox_no_proxy
-            }
-            
-            # 添加用户ID到环境变量
-            if user_id:
-                env_vars["USER_ID"] = user_id
-                logger.info(f"Setting USER_ID={user_id} for sandbox container")
-            
-            # 添加自定义环境变量
-            if environment_variables:
-                for key, value in environment_variables.items():
-                    env_vars[key] = value
-                logger.info(f"Adding {len(environment_variables)} custom environment variables to sandbox container")
-
-            # 准备容器配置
+            # Prepare container configuration
             container_config = {
-                "image": settings.sandbox_image,
+                "image": image,
                 "name": container_name,
                 "detach": True,
-                # 自动删除容器但保留命名卷，以便持久化数据
                 "remove": True,
-                "environment": env_vars,
-                "volumes": {
-                    volume_name: {
-                        'bind': '/home/ubuntu',
-                        'mode': 'rw'
-                    }
+                "environment": {
+                    "SERVICE_TIMEOUT_MINUTES": settings.sandbox_ttl_minutes,
+                    "CHROME_ARGS": settings.sandbox_chrome_args,
+                    "HTTPS_PROXY": settings.sandbox_https_proxy,
+                    "HTTP_PROXY": settings.sandbox_http_proxy,
+                    "NO_PROXY": settings.sandbox_no_proxy
                 }
             }
-
-            if is_remote_docker:
-                port_range = range(30720, 40730)
-                api_server_port = random.choice(port_range)
-                vnc_port = random.choice(port_range)
-                cdp_port = random.choice(port_range)
-                code_server_port = random.choice(port_range)
-                container_config["ports"] = {
-                    "8080": {
-                        "HostPort": api_server_port
-                    },
-                    "5901": {
-                        "HostPort": vnc_port
-                    },
-                    "9222": {
-                        "HostPort": cdp_port
-                    },
-                    "8443": {
-                        "HostPort": code_server_port
-                    }
-                }
             
-            # 添加网络配置
+            # Add network to container config if configured
             if settings.sandbox_network:
                 container_config["network"] = settings.sandbox_network
             
-            # 创建容器
+            # Create container
             container = docker_client.containers.run(**container_config)
-            logger.info(f"Created new container: {container_name} with volume: {volume_name}")
             
-            # 获取容器IP地址
-            container.reload()
-            network_settings = container.attrs['NetworkSettings']
-            ip_address = network_settings['IPAddress']
+            # Get container IP address
+            container.reload()  # Refresh container info
+            ip_address = DockerSandbox._get_container_ip(container)
             
-            # 如果默认网络没有IP，尝试从其他网络获取IP
-            if not ip_address and 'Networks' in network_settings:
-                networks = network_settings['Networks']
-                for network_name, network_config in networks.items():
-                    if 'IPAddress' in network_config and network_config['IPAddress']:
-                        ip_address = network_config['IPAddress']
-                        break
-            
-            # 对于远程Docker，使用配置的远程地址
-            if is_remote_docker and settings.sandbox_remote_address:
-                logger.info(f"Using configured remote sandbox address: {settings.sandbox_remote_address}")
-                return DockerSandbox(
-                    container_name=container_name,
-                    ip=settings.sandbox_remote_address,
-                    api_server_port=api_server_port,
-                    vnc_port=vnc_port,
-                    cdp_port=cdp_port,
-                    code_server_port=code_server_port,
-                    user_id=user_id,
-                    environment_variables=environment_variables
-                )
-            
-            # 创建并返回DockerSandbox实例
+            # Create and return DockerSandbox instance
             return DockerSandbox(
-                container_name=container_name,
                 ip=ip_address,
-                user_id=user_id,
-                environment_variables=environment_variables
+                container_name=container_name
             )
             
         except Exception as e:
-            logger.exception(f"Failed to get or create Docker sandbox: {str(e)}")
-            raise Exception(f"Failed to get or create Docker sandbox: {str(e)}")
-    
-    def get_cdp_url(self) -> str:
-        return self.cdp_url
+            raise Exception(f"Failed to create Docker sandbox: {str(e)}")
 
-    def get_vnc_url(self) -> str:
-        return self.vnc_url
-
-    def get_code_server_url(self) -> str:
-        return self.code_server_url
-
-    async def get_status(self) -> ToolResult:
-        """获取沙箱状态
+    async def ensure_sandbox(self) -> None:
+        """Ensure sandbox is ready by checking that all services are RUNNING"""
+        max_retries = 30  # Maximum number of retries
+        retry_interval = 2  # Seconds between retries
         
-        返回沙箱中各服务的运行状态
+        for attempt in range(max_retries):
+            try:
+                response = await self.client.get(f"{self.base_url}/api/v1/supervisor/status")
+                response.raise_for_status()
+                
+                # Parse response as ToolResult
+                tool_result = ToolResult(**response.json())
+                
+                if not tool_result.success:
+                    logger.warning(f"Supervisor status check failed: {tool_result.message}")
+                    await asyncio.sleep(retry_interval)
+                    continue
+                
+                services = tool_result.data or []
+                if not services:
+                    logger.warning("No services found in supervisor status")
+                    await asyncio.sleep(retry_interval)
+                    continue
+                
+                # Check if all services are RUNNING
+                all_running = True
+                non_running_services = []
+                
+                for service in services:
+                    service_name = service.get("name", "unknown")
+                    state_name = service.get("statename", "")
+                    
+                    if state_name != "RUNNING":
+                        all_running = False
+                        non_running_services.append(f"{service_name}({state_name})")
+                
+                if all_running:
+                    logger.info(f"All {len(services)} services are RUNNING - sandbox is ready")
+                    return  # Success - all services are running
+                else:
+                    logger.info(f"Waiting for services to start... Non-running: {', '.join(non_running_services)} (attempt {attempt + 1}/{max_retries})")
+                    await asyncio.sleep(retry_interval)
+                    
+            except Exception as e:
+                logger.warning(f"Failed to check supervisor status (attempt {attempt + 1}/{max_retries}): {str(e)}")
+                await asyncio.sleep(retry_interval)
         
-        Returns:
-            ToolResult: 包含沙箱服务状态的工具结果
-        """
-        try:
-            response = await self.client.get(f"{self.base_url}/api/v1/supervisor/status")
-            return ToolResult(**response.json())
-        except Exception as e:
-            return ToolResult(success=False, message=f"获取沙箱状态失败: {str(e)}")
+        # If we reach here, we've exhausted all retries
+        error_message = f"Sandbox services failed to start after {max_retries} attempts ({max_retries * retry_interval} seconds)"
+        logger.error(error_message)
+        #raise Exception(error_message)
 
     async def exec_command(self, session_id: str, exec_dir: str, command: str) -> ToolResult:
         response = await self.client.post(
@@ -322,24 +187,15 @@ class DockerSandbox(SandboxInterface):
         )
         return ToolResult(**response.json())
 
-    async def view_shell(self, session_id: str) -> ToolResult:
-        try:
-            # 设置超时时间为10秒，防止请求卡住
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                response = await client.post(
-                    f"{self.base_url}/api/v1/shell/view",
-                    json={"id": session_id}
-                )
-                return ToolResult(**response.json())
-        except httpx.TimeoutException:
-            logger.warning(f"视图Shell请求超时 - session_id: {session_id}")
-            return ToolResult(success=False, message="请求超时，可能是因为Shell会话处理了大量输出")
-        except httpx.RemoteProtocolError as e:
-            logger.error(f"远程协议错误 - session_id: {session_id}, 错误: {str(e)}")
-            return ToolResult(success=False, message=f"连接错误: {str(e)}")
-        except Exception as e:
-            logger.exception(f"查看Shell输出时出错 - session_id: {session_id}")
-            return ToolResult(success=False, message=f"查看Shell输出失败: {str(e)}")
+    async def view_shell(self, session_id: str, console: bool = False) -> ToolResult:
+        response = await self.client.post(
+            f"{self.base_url}/api/v1/shell/view",
+            json={
+                "id": session_id,
+                "console": console
+            }
+        )
+        return ToolResult(**response.json())
 
     async def wait_for_process(self, session_id: str, seconds: Optional[int] = None) -> ToolResult:
         response = await self.client.post(
@@ -530,75 +386,48 @@ class DockerSandbox(SandboxInterface):
         )
         return ToolResult(**response.json())
 
-    async def file_upload(self, file_path: str, content: bytes, make_executable: bool = False) -> ToolResult:
-        """
-        上传二进制文件内容到沙箱
+    async def file_upload(self, file_data: BinaryIO, path: str, filename: str = None) -> ToolResult:
+        """Upload file to sandbox
         
         Args:
-            file_path: 在沙箱中的目标文件路径
-            content: 文件二进制内容
-            make_executable: 是否将文件设置为可执行
+            file_data: File content as binary stream
+            path: Target file path in sandbox
+            filename: Original filename (optional)
             
         Returns:
-            上传结果
+            Upload operation result
         """
-        await self.ensure_status()
-        # 使用multipart/form-data上传二进制内容
-        import io
-        import aiohttp
-        from aiohttp import FormData
+        # Prepare form data for upload
+        files = {"file": (filename or "upload", file_data, "application/octet-stream")}
+        data = {"path": path}
         
-        form = FormData()
-        form.add_field('file', 
-                       io.BytesIO(content),
-                       filename=os.path.basename(file_path))
-        form.add_field('path', file_path)
-        form.add_field('make_executable', str(make_executable).lower())
-        
-        async with aiohttp.ClientSession() as session:
-            async with session.post(f"{self.base_url}/api/v1/file/upload", data=form) as response:
-                result_json = await response.json()
-                return ToolResult(**result_json)
-                
-    async def file_download(self, file_path: str) -> bytes:
-        """
-        从沙箱下载文件的二进制内容
-        
-        Args:
-            file_path: 沙箱中的文件路径
-            
-        Returns:
-            文件的二进制内容
-            
-        Raises:
-            FileNotFoundError: 当文件不存在时
-            PermissionError: 当权限不足时
-            Exception: 其他错误
-        """
-        import aiohttp
-        
-        # 首先检查文件是否存在
-        result = await self.file_exists(file_path)
-        if not result.success or not result.data.get("exists", False):
-            raise FileNotFoundError(f"文件在沙箱中不存在: {file_path}")
-        
-        # 发起下载请求
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                f"{self.base_url}/api/v1/file/download",
-                json={"path": file_path}
-            ) as response:
-                if response.status == 200:
-                    return await response.read()
-                elif response.status == 404:
-                    raise FileNotFoundError(f"文件在沙箱中不存在: {file_path}")
-                elif response.status == 403:
-                    raise PermissionError(f"没有权限访问文件: {file_path}")
-                else:
-                    error_text = await response.text()
-                    raise Exception(f"下载文件失败 ({response.status}): {error_text}")
+        response = await self.client.post(
+            f"{self.base_url}/api/v1/file/upload",
+            files=files,
+            data=data
+        )
+        return ToolResult(**response.json())
 
+    async def file_download(self, path: str) -> BinaryIO:
+        """Download file from sandbox
+        
+        Args:
+            path: File path in sandbox
+            
+        Returns:
+            File content as binary stream
+        """
+        response = await self.client.get(
+            f"{self.base_url}/api/v1/file/download",
+            params={"path": path}
+        )
+        response.raise_for_status()
+        
+        # Return the response content as a BinaryIO stream
+        return io.BytesIO(response.content)
+    
     @staticmethod
+    @alru_cache(maxsize=128, typed=True)
     async def _resolve_hostname_to_ip(hostname: str) -> str:
         """Resolve hostname to IP address
         
@@ -607,6 +436,71 @@ class DockerSandbox(SandboxInterface):
             
         Returns:
             Resolved IP address, or None if resolution fails
+            
+        Note:
+            This method is cached using LRU cache with a maximum size of 128 entries.
+            The cache helps reduce repeated DNS lookups for the same hostname.
+        """
+        try:
+            # First check if hostname is already in IP address format
+            try:
+                socket.inet_pton(socket.AF_INET, hostname)
+                # If successfully parsed, it's an IPv4 address format, return directly
+                return hostname
+            except OSError:
+                # Not a valid IP address format, proceed with DNS resolution
+                pass
+                
+            # Use socket.getaddrinfo for DNS resolution
+            addr_info = socket.getaddrinfo(hostname, None, family=socket.AF_INET)
+            # Return the first IPv4 address found
+            if addr_info and len(addr_info) > 0:
+                return addr_info[0][4][0]  # Return sockaddr[0] from (family, type, proto, canonname, sockaddr), which is the IP address
+            return None
+        except Exception as e:
+            # Log error and return None on failure
+            logger.error(f"Failed to resolve hostname {hostname}: {str(e)}")
+            return None
+    
+    async def destroy(self) -> bool:
+        """Destroy Docker sandbox"""
+        try:
+            if self.client:
+                await self.client.aclose()
+            if self.container_name:
+                docker_client = docker.from_env()
+                docker_client.containers.get(self.container_name).remove(force=True)
+            return True
+        except Exception as e:
+            logger.error(f"Failed to destroy Docker sandbox: {str(e)}")
+            return False
+    
+    async def get_browser(self) -> Browser:
+        """Get browser instance
+        
+        Args:
+            llm: LLM instance used for browser automation
+            
+        Returns:
+            Browser: Returns a configured PlaywrightBrowser instance
+                    connected using the sandbox's CDP URL
+        """
+        return PlaywrightBrowser(self.cdp_url)
+
+    @staticmethod
+    @alru_cache(maxsize=128, typed=True)
+    async def _resolve_hostname_to_ip(hostname: str) -> str:
+        """Resolve hostname to IP address
+        
+        Args:
+            hostname: Hostname to resolve
+            
+        Returns:
+            Resolved IP address, or None if resolution fails
+            
+        Note:
+            This method is cached using LRU cache with a maximum size of 128 entries.
+            The cache helps reduce repeated DNS lookups for the same hostname.
         """
         try:
             # First check if hostname is already in IP address format
@@ -629,247 +523,42 @@ class DockerSandbox(SandboxInterface):
             logger.error(f"Failed to resolve hostname {hostname}: {str(e)}")
             return None
 
-    async def close(self):
-        """关闭连接和清理资源"""
-        try:
-            # 清理Docker容器
-            settings = get_settings()
-            try:
-                # 创建Docker客户端
-                docker_client = self._create_docker_client(settings)
-                
-                # 尝试查找匹配IP的容器
-                containers = docker_client.containers.list(
-                    filters={"name": self.container_name}
-                )
-                
-                for container in containers:
-                    container.stop()
-                    try:
-                        container.remove(force=True)
-                    except Exception as e:
-                        logger.error(f"Failed to remove container {container.name}: {str(e)}")
-            except Exception as e:
-                logger.error(f"清理Docker容器时出错: {str(e)}")
-        except Exception as e:
-            logger.error(f"关闭沙箱连接时出错: {str(e)}")
+    @classmethod
+    async def create(cls) -> Sandbox:
+        """Create a new sandbox instance
         
-        # 关闭HTTP客户端
-        if self.client:
-            await self.client.aclose()
+        Returns:
+            New sandbox instance
+        """
+        settings = get_settings()
 
-    # MCP服务管理相关方法
-    async def mcp_install(self, pkg: str, lang: str, args: Optional[list] = None) -> ToolResult:
-        """
-        安装并启动MCP服务器
+        if settings.sandbox_address:
+            # Chrome CDP needs IP address
+            ip = await cls._resolve_hostname_to_ip(settings.sandbox_address)
+            return DockerSandbox(ip=ip)
+    
+        return await asyncio.to_thread(DockerSandbox._create_task)
+    
+    @classmethod
+    @alru_cache(maxsize=128, typed=True)
+    async def get(cls, id: str) -> Sandbox:
+        """Get sandbox by ID
         
         Args:
-            pkg: MCP包名称
-            lang: 编程语言类型 ("python" 或 "node")
-            args: 可选的启动参数列表
+            id: Sandbox ID
             
         Returns:
-            安装结果
+            Sandbox instance
         """
-        await self.ensure_status()
-        response = await self.client.post(
-            f"{self.base_url}/api/v1/mcp/install",
-            json={
-                "pkg": pkg,
-                "lang": lang,
-                "args": args
-            }
-        )
+        settings = get_settings()
+        if settings.sandbox_address:
+            ip = await cls._resolve_hostname_to_ip(settings.sandbox_address)
+            return DockerSandbox(ip=ip, container_name=id)
 
-        if response.status_code == 200:
-            # 转换沙箱返回格式为ToolResult格式
-            response_data = response.json()
-            # status, message
-            return ToolResult(
-                success=response_data["status"] == "ok",
-                message=response_data["message"]
-            )
-        else:
-            return ToolResult(
-                success=False,
-                message=response.text
-            )
-    
-    async def mcp_uninstall(self, pkg: str) -> ToolResult:
-        """
-        停止并卸载MCP服务器
+        docker_client = docker.from_env()
+        container = docker_client.containers.get(id)
+        container.reload()
         
-        Args:
-            pkg: MCP包名称
-            
-        Returns:
-            卸载结果
-        """
-        await self.ensure_status()
-        response = await self.client.delete(
-            f"{self.base_url}/api/v1/mcp/uninstall/{pkg}"
-        )
-        
-        if response.status_code == 200:
-            # 转换沙箱返回格式为ToolResult格式
-            response_data = response.json()
-            # status, message
-            return ToolResult(
-                success=response_data["status"] == "ok",
-                message=response_data["message"]
-            )
-        else:
-            return ToolResult(
-                success=False,
-                message=response.text
-            )
-    
-    async def mcp_list_servers(self) -> ToolResult:
-        """
-        列出所有已安装的MCP服务器
-        
-        Returns:
-            服务器列表结果，包含各服务器的状态信息
-        """
-        await self.ensure_status()
-        response = await self.client.get(
-            f"{self.base_url}/api/v1/mcp/list"
-        )
-        
-        if response.status_code == 200:
-            # 转换沙箱返回格式为ToolResult格式
-            response_data = response.json()
-            # servers
-            return ToolResult(
-                success=True,
-                data=response_data["servers"]
-            )
-        else:
-            return ToolResult(
-                success=False,
-                message=response.text
-            )
-    
-    async def mcp_health_check(self, pkg: str) -> ToolResult:
-        """
-        检查MCP服务器健康状态
-        
-        Args:
-            pkg: MCP包名称
-            
-        Returns:
-            健康检查结果
-        """
-        await self.ensure_status()
-        response = await self.client.get(
-            f"{self.base_url}/api/v1/mcp/health/{pkg}"
-        )
-        
-        if response.status_code == 200:
-            # 转换沙箱返回格式为ToolResult格式
-            response_data = response.json()
-            # pkg, alive, uptime
-            return ToolResult(
-                success=True,
-                data=response_data
-            )
-        else:
-            return ToolResult(
-                success=False,
-                message=response.text
-            )
-    
-    async def mcp_proxy_request(self, pkg: str, request: Dict) -> ToolResult:
-        """
-        向MCP服务器发送代理请求
-        
-        Args:
-            pkg: MCP包名称
-            request: 请求内容字典
-            
-        Returns:
-            代理请求结果
-        """
-        await self.ensure_status()
-        response = await self.client.post(
-            f"{self.base_url}/api/v1/mcp/proxy/{pkg}",
-            json=request
-        )
-        
-        # 对于proxy请求，处理原始响应内容
-        if response.status_code < 400:
-            try:
-                response_data = response.json()
-                return ToolResult(
-                    success=True,
-                    message="MCP proxy request completed",
-                    data=response_data
-                )
-            except Exception:
-                # 如果不是JSON，返回原始内容
-                return ToolResult(
-                    success=True,
-                    message="MCP proxy request completed",
-                    data={"content": response.text}
-                )
-        else:
-            return ToolResult(
-                success=False,
-                message=f"MCP proxy request failed with status {response.status_code}",
-                data={"status_code": response.status_code, "content": response.text}
-            )
-    
-    async def mcp_get_capabilities(self, pkg: str) -> ToolResult:
-        """
-        获取MCP服务器的能力信息
-        
-        Args:
-            pkg: MCP包名称
-            
-        Returns:
-            服务器能力信息
-        """
-        await self.ensure_status()
-        response = await self.client.get(
-            f"{self.base_url}/api/v1/mcp/capabilities/{pkg}"
-        )
-        
-        if response.status_code == 200:
-            # 转换沙箱返回格式为ToolResult格式
-            response_data = response.json()
-            # pkg, tools_count, tools
-            return ToolResult(
-                success=True,
-                data=response_data
-            )
-        else:
-            return ToolResult(
-                success=False,
-                message=response.text
-            )
-    
-    async def mcp_shutdown_all(self) -> ToolResult:
-        """
-        关闭所有MCP服务器
-        
-        Returns:
-            关闭操作结果
-        """
-        await self.ensure_status()
-        response = await self.client.post(
-            f"{self.base_url}/api/v1/mcp/shutdown"
-        )
-        
-        if response.status_code == 200:
-            # 转换沙箱返回格式为ToolResult格式
-            response_data = response.json()
-            # status, message
-            return ToolResult(
-                success=response_data["status"] == "ok",
-                message=response_data["message"]
-            )
-        else:
-            return ToolResult(
-                success=False,
-                message=response.text
-            )
+        ip_address = cls._get_container_ip(container)
+        logger.info(f"IP address: {ip_address}")
+        return DockerSandbox(ip=ip_address, container_name=id)

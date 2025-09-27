@@ -1,10 +1,11 @@
 services:
   frontend:
+#    image: ${IMAGE_REGISTRY:-simpleyyt}/manus-frontend:${IMAGE_TAG:-latest}
     build:
       context: ./frontend
       dockerfile: Dockerfile
     ports:
-      - "5178:80"
+      - "5173:80"
     depends_on:
       - backend
     restart: unless-stopped
@@ -14,39 +15,55 @@ services:
       - BACKEND_URL=http://backend:8000
 
   backend:
+#    image: ${IMAGE_REGISTRY:-simpleyyt}/manus-backend:${IMAGE_TAG:-latest}
     build:
       context: ./backend
       dockerfile: Dockerfile
     depends_on:
       - sandbox
+      - mongodb
+      - redis
     restart: unless-stopped
-    ports: 
-      - "8000:8000"
     volumes:
-      - ./backend:/app          # 后端代码挂载
-      - ./docker.env:/app/.env # 环境变量文件挂载
-      - ./backend/data:/app/data  # 数据库文件挂载
       - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./backend:/app # 后端代码挂载
+      #- ./mcp.json:/etc/mcp.json # Mount MCP servers directory
     networks:
       - manus-network
-      - searxng
-    command: >
-        sh -c "pip install -r requirements.txt && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    env_file:
+      - .env
 
   sandbox:
-    image: ghcr.io/betterandbetterii/manus-sandbox:latest
-#    build:
-#       context: ./sandbox
-#       dockerfile: Dockerfile
+#    image: ${IMAGE_REGISTRY:-simpleyyt}/manus-sandbox:${IMAGE_TAG:-latest}
+    build:
+      context: ./sandbox
+      dockerfile: Dockerfile
     command: /bin/sh -c "exit 0"  # prevent sandbox from starting, ensure image is pulled
     restart: "no"
     networks:
       - manus-network
-      - searxng
+
+  mongodb:
+    image: mongo:7.0
+    volumes:
+      - mongodb_data:/data/db
+    restart: unless-stopped
+    #ports:
+    #  - "27017:27017"
+    networks:
+      - manus-network
+
+  redis:
+    image: redis:7.0
+    restart: unless-stopped
+    networks:
+      - manus-network
+
+volumes:
+  mongodb_data:
+    name: manus-mongodb-data
 
 networks:
   manus-network:
     name: manus-network
     driver: bridge
-  searxng:
-    external: true

@@ -69,6 +69,8 @@ async def activate_timeout(request: TimeoutRequest):
     minutes: Optional, timeout duration (minutes), if not provided, system default configuration will be used
     """
     result = await supervisor_service.activate_timeout(request.minutes)
+    # Disable auto-expand since user explicitly controls timeout
+    supervisor_service.disable_auto_expand()
     return Response(
         success=True,
         message=f"Timeout reset, all services will be shut down after {result.timeout_minutes} minutes",
@@ -83,6 +85,8 @@ async def extend_timeout(request: TimeoutRequest):
     minutes: Optional, number of minutes to extend, if not provided, system default configuration will be used
     """
     result = await supervisor_service.extend_timeout(request.minutes)
+    # Disable auto-expand since user explicitly controls timeout
+    supervisor_service.disable_auto_expand()
     return Response(
         success=True,
         message=f"Timeout extended, all services will be shut down after {result.timeout_minutes} minutes",

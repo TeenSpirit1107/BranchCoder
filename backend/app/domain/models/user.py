@@ -1,69 +1,51 @@
-"""User domain model."""
+from typing import Optional
+from datetime import datetime, UTC
+from pydantic import BaseModel, field_validator, EmailStr
+from enum import Enum
 
-from typing import List, Optional, Dict, Any
-from dataclasses import dataclass, field
-from datetime import datetime
+
+class UserRole(str, Enum):
+    ADMIN = "admin"
+    USER = "user"
 
 
-@dataclass
-class UserFile:
-    """User file model."""
-    
+class User(BaseModel):
+    """User domain model"""
     id: str
-    user_id: str
-    filename: str
-    path: str
-    created_at: datetime = field(default_factory=datetime.now)
-    updated_at: datetime = field(default_factory=datetime.now)
-    metadata: Dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass
-class UserTask:
-    """User task history model."""
+    fullname: str
+    email: str  # Now required field for login
+    password_hash: Optional[str] = None
+    role: UserRole = UserRole.USER
+    is_active: bool = True
+    created_at: datetime = datetime.now(UTC)
+    updated_at: datetime = datetime.now(UTC)
+    last_login_at: Optional[datetime] = None
     
-    id: str
-    user_id: str
-    agent_id: str
-    title: str
-    status: str
-    created_at: datetime = field(default_factory=datetime.now)
-    completed_at: Optional[datetime] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
-    
-    def complete(self) -> None:
-        """Mark the task as completed."""
-        self.status = "completed"
-        self.completed_at = datetime.now()
-
-
-@dataclass
-class User:
-    """User domain model."""
-    
-    id: str
-    email: str
-    name: Optional[str] = None
-    groups: List[str] = field(default_factory=list)
-    created_at: datetime = field(default_factory=datetime.now)
-    last_login: datetime = field(default_factory=datetime.now)
-    tasks: List[UserTask] = field(default_factory=list)
-    files: List[UserFile] = field(default_factory=list)
-    
+    @field_validator('fullname')
     @classmethod
-    def from_oauth(cls, user_info: Dict[str, Any]) -> "User":
-        """Create a User from OAuth user information."""
-        return cls(
-            id=user_info.get("user_id", ""),
-            email=user_info.get("email", ""),
-            name=user_info.get("name"),
-            groups=user_info.get("groups", []),
-        )
+    def validate_fullname(cls, v):
+        if not v or len(v.strip()) < 2:
+            raise ValueError("Full name must be at least 2 characters long")
+        return v.strip()
     
-    def add_task(self, task: UserTask) -> None:
-        """Add a task to the user's history."""
-        self.tasks.append(task)
+    @field_validator('email')
+    @classmethod
+    def validate_email(cls, v):
+        if not v or '@' not in v:
+            raise ValueError("Valid email is required")
+        return v.strip().lower()
     
-    def add_file(self, file: UserFile) -> None:
-        """Add a file to the user's files."""
-        self.files.append(file) 
+    def update_last_login(self):
+        """Update last login timestamp"""
+        self.last_login_at = datetime.now(UTC)
+        self.updated_at = datetime.now(UTC)
+    
+    def deactivate(self):
+        """Deactivate user account"""
+        self.is_active = False
+        self.updated_at = datetime.now(UTC)
+    
+    def activate(self):
+        """Activate user account"""
+        self.is_active = True
+        self.updated_at = datetime.now(UTC) 

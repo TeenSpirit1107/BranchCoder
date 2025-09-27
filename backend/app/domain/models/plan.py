@@ -1,43 +1,32 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import List, Dict, Any, Optional
 from enum import Enum
+import uuid
 
 class ExecutionStatus(str, Enum):
     PENDING = "pending"
     RUNNING = "running"
     COMPLETED = "completed"
     FAILED = "failed"
-    PAUSED = "paused"
-    
-class SubPlannerType(Enum):
-    CODE = "code"
-    SEARCH = "search"
-    FILE = "file"
-    REASONING = "reasoning"
 
 class Step(BaseModel):
-    id: str
-
-    # superplanner modification
-    sub_plan_step: Optional[str] = None
-    sub_flow_type: Optional[SubPlannerType] = None
-    
-    description: str
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    description: str = ""
     status: ExecutionStatus = ExecutionStatus.PENDING
     result: Optional[str] = None
     error: Optional[str] = None
-
-    file: Optional[List[Dict[str, Any]]] = None
-    web: Optional[List[Dict[str, Any]]] = None
+    success: bool = False
+    attachments: List[str] = []
 
     def is_done(self) -> bool:
         return self.status == ExecutionStatus.COMPLETED or self.status == ExecutionStatus.FAILED
 
 class Plan(BaseModel):
-    id: str
-    title: str
-    goal: str
-    steps: List[Step]
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    title: str = ""
+    goal: str = ""
+    language: Optional[str] = "en"
+    steps: List[Step] = []
     message: Optional[str] = None
     status: ExecutionStatus = ExecutionStatus.PENDING
     result: Optional[Dict[str, Any]] = None
@@ -51,3 +40,6 @@ class Plan(BaseModel):
             if not step.is_done():
                 return step
         return None
+    
+    def dump_json(self) -> str:
+        return self.model_dump_json(include={"goal", "language", "steps"})

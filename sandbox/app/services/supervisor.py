@@ -47,11 +47,26 @@ class SupervisorService:
         self.timeout_active = settings.SERVICE_TIMEOUT_MINUTES is not None
         self.shutdown_task = None
         self.shutdown_time = None
+        # Auto-expand functionality - disabled when user explicitly controls timeout
+        self._auto_expand_enabled = True
         
         # If timeout is configured, create scheduled task
         if settings.SERVICE_TIMEOUT_MINUTES is not None:
             self.shutdown_time = datetime.now() + timedelta(minutes=settings.SERVICE_TIMEOUT_MINUTES)
             self._setup_timer(settings.SERVICE_TIMEOUT_MINUTES)
+    
+    @property
+    def auto_expand_enabled(self) -> bool:
+        """Get auto-expand status"""
+        return self._auto_expand_enabled
+    
+    def disable_auto_expand(self):
+        """Disable auto-expand functionality (called when user explicitly manages timeout)"""
+        self._auto_expand_enabled = False
+    
+    def enable_auto_expand(self):
+        """Enable auto-expand functionality"""
+        self._auto_expand_enabled = True
     
     def _connect_rpc(self):
         """Connect to supervisord's RPC interface"""
@@ -71,8 +86,7 @@ class SupervisorService:
         if self.shutdown_task:
             try:
                 self.shutdown_task.cancel()
-            except Exception:
-                # ignore
+            except:
                 pass
             
         # Create scheduled task function
@@ -84,7 +98,7 @@ class SupervisorService:
         try:
             loop = asyncio.get_event_loop()
             self.shutdown_task = loop.create_task(shutdown_after_timeout())
-        except Exception:
+        except Exception as e:
             # If async task creation fails, fall back to thread timer
             if hasattr(self, 'shutdown_timer') and self.shutdown_timer:
                 self.shutdown_timer.cancel()
@@ -115,7 +129,7 @@ class SupervisorService:
         """Asynchronously stop all services"""
         try:
             result = await self._call_rpc(self.server.supervisor.stopAllProcesses)
-            return SupervisorActionResult(status="stopped", result=result, stop_result=None, start_result=None, shutdown_result=None)
+            return SupervisorActionResult(status="stopped", result=result)
         except Exception as e:
             raise BadRequestException(f"Failed to stop all services: {str(e)}")
     
@@ -123,7 +137,7 @@ class SupervisorService:
         """Asynchronously shut down the supervisord service itself, without stopping processes"""
         try:
             shutdown_result = await self._call_rpc(self.server.supervisor.shutdown)
-            return SupervisorActionResult(status="shutdown", result=None, stop_result=None, start_result=None, shutdown_result=shutdown_result)
+            return SupervisorActionResult(status="shutdown", shutdown_result=shutdown_result)
         except Exception as e:
             raise BadRequestException(f"Failed to shut down supervisord service: {str(e)}")
     
@@ -133,11 +147,9 @@ class SupervisorService:
             stop_result = await self._call_rpc(self.server.supervisor.stopAllProcesses)
             start_result = await self._call_rpc(self.server.supervisor.startAllProcesses)
             return SupervisorActionResult(
-                status="restarted",
-                result=None,
+                status="restarted", 
                 stop_result=stop_result,
-                start_result=start_result,
-                shutdown_result=None
+                start_result=start_result
             )
         except Exception as e:
             raise BadRequestException(f"Failed to restart services: {str(e)}")
@@ -166,8 +178,7 @@ class SupervisorService:
             status="timeout_activated",
             active=True,
             shutdown_time=self.shutdown_time.isoformat(),
-            timeout_minutes=timeout_minutes,
-            remaining_seconds=float(timeout_minutes) * 60.0 if timeout_minutes is not None else None
+            timeout_minutes=timeout_minutes
         )
     
     async def extend_timeout(self, minutes=None) -> SupervisorTimeout:
@@ -194,39 +205,37 @@ class SupervisorService:
             status="timeout_extended",
             active=True,
             shutdown_time=self.shutdown_time.isoformat(),
-            timeout_minutes=timeout_minutes,
-            remaining_seconds=float(timeout_minutes) * 60.0 if timeout_minutes is not None else None
+            timeout_minutes=timeout_minutes
         )
     
     async def cancel_timeout(self) -> SupervisorTimeout:
         """Asynchronously cancel timeout functionality"""
         if not self.timeout_active:
-            return SupervisorTimeout(status="no_timeout_active", active=False, shutdown_time=None, timeout_minutes=None, remaining_seconds=None)
+            return SupervisorTimeout(status="no_timeout_active", active=False)
         
         if self.shutdown_task:
             try:
                 self.shutdown_task.cancel()
                 self.shutdown_task = None
-            except Exception:
+            except:
                 pass
         
         # Also check thread timer (for compatibility)
         if hasattr(self, 'shutdown_timer') and self.shutdown_timer:
-            try:
-                self.shutdown_timer.cancel()
-                self.shutdown_timer = None
-            except Exception:
-                pass
+            self.shutdown_timer.cancel()
+            self.shutdown_timer = None
         
         self.timeout_active = False
         self.shutdown_time = None
+        # Re-enable auto-expand when timeout is cancelled
+        self._auto_expand_enabled = True
         
-        return SupervisorTimeout(status="timeout_cancelled", active=False, shutdown_time=None, timeout_minutes=None, remaining_seconds=None)
+        return SupervisorTimeout(status="timeout_cancelled", active=False)
     
     async def get_timeout_status(self) -> SupervisorTimeout:
         """Asynchronously get current timeout status"""
         if not self.timeout_active:
-            return SupervisorTimeout(status="no_timeout_active", active=False, shutdown_time=None, timeout_minutes=None, remaining_seconds=None)
+            return SupervisorTimeout(active=False)
         
         remaining_seconds = 0
         if self.shutdown_time:
@@ -234,10 +243,8 @@ class SupervisorService:
             remaining_seconds = max(0, remaining.total_seconds())
         
         return SupervisorTimeout(
-            status="timeout_active",
             active=self.timeout_active,
             shutdown_time=self.shutdown_time.isoformat() if self.shutdown_time else None,
-            timeout_minutes=None,
             remaining_seconds=remaining_seconds
         )
 

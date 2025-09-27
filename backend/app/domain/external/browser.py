@@ -70,10 +70,17 @@ class Browser(Protocol):
         """Scroll down"""
         ...
     
+    async def screenshot(
+        self,
+        full_page: Optional[bool] = False
+    ) -> bytes:
+        """Take a screenshot of the current page"""
+        ...
+    
     async def console_exec(self, javascript: str) -> ToolResult:
         """Execute JavaScript code"""
         ...
     
     async def console_view(self, max_lines: Optional[int] = None) -> ToolResult:
         """View console output"""
-        ... 
+        ...

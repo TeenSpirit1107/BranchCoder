@@ -113,9 +113,8 @@ Base URL: `/api/v1`
   ```json
   {
     "id": "session_id",  /* Optional, automatically created if not provided */
-    "exec_dir": "/path/to/dir",  /* Execution directory */
-    "command": "ls -la",  /* Command to execute */
-    "sudo": false  /* Optional, whether to execute with sudo */
+    "exec_dir": "/path/to/dir",  /* Optional, command execution working directory (must use absolute path) */
+    "command": "ls -la"  /* Command to execute */
   }
   ```
 - **Response**:
@@ -145,19 +144,90 @@ Base URL: `/api/v1`
   ```json
   {
     "success": true,
-    "message": "Query successful",
+    "message": "Session content retrieved successfully",
     "data": {
-      "content": "Session output content",
-      "session_id": "session_id"
+      "output": "Session output content",
+      "session_id": "session_id",
+      "console": [
+        {
+          "ps1": "user@host:~/dir $",
+          "command": "ls -la",
+          "output": "File listing output"
+        }
+      ]
     }
   }
   ```
 
-#### Other Shell Operations
+#### Wait for Process
 
-- **Wait for Process**: `POST /api/v1/shell/wait`
-- **Write Input**: `POST /api/v1/shell/write`
-- **Terminate Process**: `POST /api/v1/shell/kill`
+- **Endpoint**: `POST /api/v1/shell/wait`
+- **Description**: Wait for the process in the specified session to complete
+- **Request Body**:
+  ```json
+  {
+    "id": "session_id",  /* Target session ID */
+    "seconds": 10  /* Optional, wait time (seconds) */
+  }
+  ```
+- **Response**:
+  ```json
+  {
+    "success": true,
+    "message": "Process completed, return code: 0",
+    "data": {
+      "session_id": "session_id",
+      "returncode": 0,
+      "status": "completed"
+    }
+  }
+  ```
+
+#### Write Input
+
+- **Endpoint**: `POST /api/v1/shell/write`
+- **Description**: Write input to the process in the specified session
+- **Request Body**:
+  ```json
+  {
+    "id": "session_id",  /* Target session ID */
+    "input": "example input",  /* Content to write */
+    "press_enter": true  /* Whether to simulate pressing Enter after input */
+  }
+  ```
+- **Response**:
+  ```json
+  {
+    "success": true,
+    "message": "Input written",
+    "data": {
+      "session_id": "session_id",
+      "input": "example input"
+    }
+  }
+  ```
+
+#### Terminate Process
+
+- **Endpoint**: `POST /api/v1/shell/kill`
+- **Description**: Terminate the process in the specified session
+- **Request Body**:
+  ```json
+  {
+    "id": "session_id"  /* Target session ID */
+  }
+  ```
+- **Response**:
+  ```json
+  {
+    "success": true,
+    "message": "Process terminated",
+    "data": {
+      "session_id": "session_id",
+      "status": "terminated"
+    }
+  }
+  ```
 
 ### 2. File Operation Endpoints
 
@@ -168,10 +238,10 @@ Base URL: `/api/v1`
 - **Request Body**:
   ```json
   {
-    "file": "/path/to/file",  /* File path */
-    "start_line": 1,  /* Optional, start line */
-    "end_line": 100,  /* Optional, end line */
-    "sudo": false  /* Optional, whether to read with sudo */
+    "file": "/path/to/file",  /* Absolute file path */
+    "start_line": 0,  /* Optional, start line (counting from 0) */
+    "end_line": 100,  /* Optional, end line (excluding this line) */
+    "sudo": false  /* Optional, whether to read with sudo permissions */
   }
   ```
 - **Response**:
@@ -194,17 +264,105 @@ Base URL: `/api/v1`
 - **Request Body**:
   ```json
   {
-    "file": "/path/to/file",  /* File path */
+    "file": "/path/to/file",  /* Absolute file path */
     "content": "File content",  /* Content to write */
-    "sudo": false  /* Optional, whether to write with sudo */
+    "append": false,  /* Optional, whether to use append mode */
+    "leading_newline": false,  /* Optional, whether to add a newline before the content */
+    "trailing_newline": false,  /* Optional, whether to add a newline after the content */
+    "sudo": false  /* Optional, whether to write with sudo permissions */
+  }
+  ```
+- **Response**:
+  ```json
+  {
+    "success": true,
+    "message": "File written successfully",
+    "data": {
+      "file": "/path/to/file",
+      "bytes_written": 123
+    }
   }
   ```
 
-#### Other File Operations
+#### Replace File Content
 
-- **Replace File Content**: `POST /api/v1/file/replace`
-- **Search File Content**: `POST /api/v1/file/search`
-- **Find Files**: `POST /api/v1/file/find`
+- **Endpoint**: `POST /api/v1/file/replace`
+- **Description**: Replace strings in the file
+- **Request Body**:
+  ```json
+  {
+    "file": "/path/to/file",  /* Absolute file path */
+    "old_str": "Original string",  /* Original string to replace */
+    "new_str": "New string",  /* New replacement string */
+    "sudo": false  /* Optional, whether to use sudo permissions */
+  }
+  ```
+- **Response**:
+  ```json
+  {
+    "success": true,
+    "message": "Replacement completed, replaced 5 occurrences",
+    "data": {
+      "file": "/path/to/file",
+      "replaced_count": 5
+    }
+  }
+  ```
+
+#### Search File Content
+
+- **Endpoint**: `POST /api/v1/file/search`
+- **Description**: Search file content using regular expressions
+- **Request Body**:
+  ```json
+  {
+    "file": "/path/to/file",  /* Absolute file path */
+    "regex": "search pattern",  /* Regular expression pattern */
+    "sudo": false  /* Optional, whether to use sudo permissions */
+  }
+  ```
+- **Response**:
+  ```json
+  {
+    "success": true,
+    "message": "Search completed, found 3 matches",
+    "data": {
+      "file": "/path/to/file",
+      "matches": [
+        {
+          "line_number": 10,
+          "line": "Matching line content",
+          "match": "Matching content"
+        }
+      ]
+    }
+  }
+  ```
+
+#### Find Files
+
+- **Endpoint**: `POST /api/v1/file/find`
+- **Description**: Find files based on filename patterns
+- **Request Body**:
+  ```json
+  {
+    "path": "/path/to/dir",  /* Directory path to search */
+    "glob": "*.txt"  /* Filename pattern (glob syntax) */
+  }
+  ```
+- **Response**:
+  ```json
+  {
+    "success": true,
+    "message": "Search completed, found 5 files",
+    "data": {
+      "files": [
+        "/path/to/dir/file1.txt",
+        "/path/to/dir/file2.txt"
+      ]
+    }
+  }
+  ```
 
 ### 3. Process Management Endpoints
 
@@ -212,15 +370,141 @@ Base URL: `/api/v1`
 
 - **Endpoint**: `GET /api/v1/supervisor/status`
 - **Description**: Get the status of all service processes
+- **Response**:
+  ```json
+  {
+    "success": true,
+    "message": "Services status retrieved successfully",
+    "data": [
+      {
+        "name": "chrome",
+        "status": "RUNNING",
+        "description": "pid 123, uptime 10:30:45"
+      }
+    ]
+  }
+  ```
 
-#### Restart Service
+#### Stop All Services
+
+- **Endpoint**: `POST /api/v1/supervisor/stop`
+- **Description**: Stop all services
+- **Response**:
+  ```json
+  {
+    "success": true,
+    "message": "All services stopped",
+    "data": {
+      "status": "stopped"
+    }
+  }
+  ```
+
+#### Shutdown Supervisor
+
+- **Endpoint**: `POST /api/v1/supervisor/shutdown`
+- **Description**: Only shut down the supervisord service itself
+- **Response**:
+  ```json
+  {
+    "success": true,
+    "message": "Supervisord service shutdown",
+    "data": {
+      "status": "shutdown"
+    }
+  }
+  ```
+
+#### Restart All Services
 
 - **Endpoint**: `POST /api/v1/supervisor/restart`
-- **Description**: Restart the specified service
+- **Description**: Restart all services
+- **Response**:
+  ```json
+  {
+    "success": true,
+    "message": "All services restarted",
+    "data": {
+      "status": "restarted"
+    }
+  }
+  ```
+
+#### Activate Timeout
+
+- **Endpoint**: `POST /api/v1/supervisor/timeout/activate`
+- **Description**: Reset the timeout function to automatically shut down all services after a specified time
 - **Request Body**:
   ```json
   {
-    "service": "chrome"  /* Service name */
+    "minutes": 60  /* Optional, timeout in minutes, if not provided, uses the system default configuration */
+  }
+  ```
+- **Response**:
+  ```json
+  {
+    "success": true,
+    "message": "Timeout reset, all services will be shut down after 60 minutes",
+    "data": {
+      "timeout_minutes": 60,
+      "timeout_timestamp": "2023-07-01T12:34:56",
+      "status": "timeout_set"
+    }
+  }
+  ```
+
+#### Extend Timeout
+
+- **Endpoint**: `POST /api/v1/supervisor/timeout/extend`
+- **Description**: Extend the timeout
+- **Request Body**:
+  ```json
+  {
+    "minutes": 30  /* Optional, minutes to extend, if not provided, uses the system default configuration */
+  }
+  ```
+- **Response**:
+  ```json
+  {
+    "success": true,
+    "message": "Timeout extended, all services will be shut down after 90 minutes",
+    "data": {
+      "timeout_minutes": 90,
+      "timeout_timestamp": "2023-07-01T14:04:56",
+      "status": "timeout_extended"
+    }
+  }
+  ```
+
+#### Cancel Timeout
+
+- **Endpoint**: `POST /api/v1/supervisor/timeout/cancel`
+- **Description**: Cancel the timeout function
+- **Response**:
+  ```json
+  {
+    "success": true,
+    "message": "Timeout cancelled",
+    "data": {
+      "status": "timeout_cancelled"
+    }
+  }
+  ```
+
+#### Get Timeout Status
+
+- **Endpoint**: `GET /api/v1/supervisor/timeout/status`
+- **Description**: Get the status of the timeout function
+- **Response**:
+  ```json
+  {
+    "success": true,
+    "message": "Remaining time: 45 minutes",
+    "data": {
+      "active": true,
+      "timeout_timestamp": "2023-07-01T14:04:56",
+      "remaining_seconds": 2700
+    }
   }
   ```
 

@@ -33,20 +33,22 @@ backend/
 
 ## 核心功能
 
-1. **AI Agent管理**：创建和管理AI Agent实例
-2. **实时对话**：通过Server-Sent Events (SSE)实现与Agent的实时对话
+1. **会话管理**：创建和管理对话会话实例
+2. **实时对话**：通过Server-Sent Events (SSE)实现实时对话
 3. **工具调用**：支持多种工具调用，包括：
    - 浏览器自动化操作（使用Playwright）
    - Shell命令执行与查看
    - 文件读写操作
+   - 网络搜索集成
 4. **沙盒环境**：使用Docker容器提供隔离的执行环境
 5. **VNC可视化**：通过WebSocket连接支持远程查看沙盒环境
-6. **网络搜索**：支持Google搜索集成（可选功能）
 
 ## 环境要求
 
 - Python 3.9+
 - Docker 20.10+
+- MongoDB 4.4+
+- Redis 6.0+
 
 ## 安装配置
 
@@ -83,6 +85,11 @@ SANDBOX_NAME_PREFIX=sandbox              # 沙盒容器名称前缀
 SANDBOX_TTL_MINUTES=30                   # 沙盒容器生存时间（分钟）
 SANDBOX_NETWORK=manus-network            # Docker 网络名称，用于沙盒容器间通信
 
+# Database configuration
+MONGODB_URL=mongodb://localhost:27017    # MongoDB 连接 URL
+MONGODB_DATABASE=manus                   # MongoDB 数据库名称
+REDIS_URL=redis://localhost:6379/0       # Redis 连接 URL
+
 # Log configuration
 LOG_LEVEL=INFO                           # 日志级别，可选: DEBUG, INFO, WARNING, ERROR, CRITICAL
 ```
@@ -112,10 +119,10 @@ docker run -p 8000:8000 --env-file .env -v /var/run/docker.sock:/var/run/docker.
 
 基础URL: `/api/v1`
 
-### 1. 创建Agent
+### 1. 创建会话
 
-- **接口**: `POST /api/v1/agents`
-- **描述**: 创建一个新的 AI Agent 实例
+- **接口**: `PUT /api/v1/sessions`
+- **描述**: 创建一个新的对话会话
 - **请求体**: 无
 - **响应**:
   ```json
@@ -123,63 +130,171 @@ docker run -p 8000:8000 --env-file .env -v /var/run/docker.sock:/var/run/docker.
     "code": 0,
     "msg": "success",
     "data": {
-      "agent_id": "string",
-      "status": "created",
-      "message": "Agent created successfully"
+      "session_id": "string"
     }
   }
   ```
 
-### 2. 与 Agent 对话
+### 2. 获取会话信息
 
-- **接口**: `POST /api/v1/agents/{agent_id}/chat`
-- **描述**: 与指定Agent进行对话
+- **接口**: `GET /api/v1/sessions/{session_id}`
+- **描述**: 获取会话信息，包括对话历史
+- **路径参数**:
+  - `session_id`: 会话ID
+- **响应**:
+  ```json
+  {
+    "code": 0,
+    "msg": "success",
+    "data": {
+      "session_id": "string",
+      "title": "string",
+      "events": []
+    }
+  }
+  ```
+
+### 3. 获取所有会话列表
+
+- **接口**: `GET /api/v1/sessions`
+- **描述**: 获取所有会话的列表
+- **响应**:
+  ```json
+  {
+    "code": 0,
+    "msg": "success",
+    "data": {
+      "sessions": [
+        {
+          "session_id": "string",
+          "title": "string",
+          "latest_message": "string",
+          "latest_message_at": 1234567890,
+          "status": "string",
+          "unread_message_count": 0
+        }
+      ]
+    }
+  }
+  ```
+
+### 4. 删除会话
+
+- **接口**: `DELETE /api/v1/sessions/{session_id}`
+- **描述**: 删除指定会话
+- **路径参数**:
+  - `session_id`: 会话ID
+- **响应**:
+  ```json
+  {
+    "code": 0,
+    "msg": "success",
+    "data": null
+  }
+  ```
+
+### 5. 停止会话
+
+- **接口**: `POST /api/v1/sessions/{session_id}/stop`
+- **描述**: 停止活跃的会话
+- **路径参数**:
+  - `session_id`: 会话ID
+- **响应**:
+  ```json
+  {
+    "code": 0,
+    "msg": "success",
+    "data": null
+  }
+  ```
+
+### 6. 与会话对话
+
+- **接口**: `POST /api/v1/sessions/{session_id}/chat`
+- **描述**: 向会话发送消息并接收流式响应
+- **路径参数**:
+  - `session_id`: 会话ID
 - **请求体**:
   ```json
   {
     "message": "用户消息内容",
-    "timestamp": 1234567890
+    "timestamp": 1234567890,
+    "event_id": "可选的事件ID"
   }
   ```
 - **响应**: Server-Sent Events (SSE) 流
 - **事件类型**:
-  - `message`: 文本消息
-  - `title`: 标题信息
-  - `plan`: 计划步骤
-  - `step`: 步骤状态
-  - `tool`: 工具调用
+  - `message`: 来自助手的文本消息
+  - `title`: 会话标题更新
+  - `plan`: 执行计划和步骤
+  - `step`: 步骤状态更新
+  - `tool`: 工具调用信息
   - `error`: 错误信息
-  - `done`: 流程结束
+  - `done`: 对话完成
 
-### 3. 查看Shell会话内容
+### 7. 查看Shell会话内容
 
-- **接口**: `POST /api/v1/agents/{agent_id}/shell`
-- **描述**: 查看指定Agent的Shell会话内容
+- **接口**: `POST /api/v1/sessions/{session_id}/shell`
+- **描述**: 查看沙盒环境中的Shell会话输出
+- **路径参数**:
+  - `session_id`: 会话ID
 - **请求体**:
   ```json
   {
     "session_id": "shell会话ID"
   }
   ```
-- **响应**: Shell会话内容
+- **响应**:
+  ```json
+  {
+    "code": 0,
+    "msg": "success",
+    "data": {
+      "output": "shell输出内容",
+      "session_id": "shell会话ID",
+      "console": [
+        {
+          "ps1": "提示符字符串",
+          "command": "执行的命令",
+          "output": "命令输出"
+        }
+      ]
+    }
+  }
+  ```
 
-### 4. 查看文件内容
+### 8. 查看文件内容
 
-- **接口**: `POST /api/v1/agents/{agent_id}/file`
-- **描述**: 查看指定Agent沙盒环境中的文件内容
+- **接口**: `POST /api/v1/sessions/{session_id}/file`
+- **描述**: 查看沙盒环境中的文件内容
+- **路径参数**:
+  - `session_id`: 会话ID
 - **请求体**:
   ```json
   {
     "file": "文件路径"
   }
   ```
-- **响应**: 文件内容
+- **响应**:
+  ```json
+  {
+    "code": 0,
+    "msg": "success",
+    "data": {
+      "content": "文件内容",
+      "file": "文件路径"
+    }
+  }
+  ```
 
-### 5. VNC连接
+### 9. VNC连接
 
-- **接口**: `WebSocket /api/v1/agents/{agent_id}/vnc`
-- **描述**: 建立与Agent沙盒环境的VNC WebSocket连接
+- **接口**: `WebSocket /api/v1/sessions/{session_id}/vnc`
+- **描述**: 建立与会话沙盒环境的VNC WebSocket连接
+- **路径参数**:
+  - `session_id`: 会话ID
 - **协议**: WebSocket (二进制模式)
+- **子协议**: `binary`
 
 ## 错误处理
 

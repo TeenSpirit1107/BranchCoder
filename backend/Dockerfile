@@ -2,13 +2,22 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# Configure pip to use Tsinghua mirror
-#RUN pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple && \
-#    pip config set global.trusted-host pypi.tuna.tsinghua.edu.cn
+# Install curl
+RUN apt-get update && apt-get install -y curl
+
+# Install uv
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
+    apt-get install -y nodejs
+
+# Install uv
+RUN pip install uv
+
+# Configure uv to use Aliyun mirror
+ENV UV_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
 
 # Install dependencies
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN uv pip install --system --no-cache -r requirements.txt
 
 # Copy project files
 COPY . .

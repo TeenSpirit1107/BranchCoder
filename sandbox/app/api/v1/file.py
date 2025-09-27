@@ -1,17 +1,14 @@
 """
 File operation API interfaces
 """
-from fastapi import APIRouter, UploadFile, File, Form, Response as FastAPIResponse
-import os
+from fastapi import APIRouter, UploadFile, File, Form
+from fastapi.responses import FileResponse
 from app.schemas.file import (
     FileReadRequest, FileWriteRequest, FileReplaceRequest,
-    FileSearchRequest, FileFindRequest, FileExistsRequest,
-    FileDownloadRequest
+    FileSearchRequest, FileFindRequest
 )
 from app.schemas.response import Response
 from app.services.file import file_service
-import re
-from urllib.parse import quote
 
 router = APIRouter()
 
@@ -24,7 +21,8 @@ async def read_file(request: FileReadRequest):
         file=request.file,
         start_line=request.start_line,
         end_line=request.end_line,
-        sudo=request.sudo
+        sudo=request.sudo,
+        max_length=request.max_length
     )
     
     # Construct response
@@ -109,109 +107,41 @@ async def find_files(request: FileFindRequest):
         data=result.model_dump()
     )
 
-@router.post("/upload", response_model=Response)
+@router.post("/upload")
 async def upload_file(
     file: UploadFile = File(...),
-    path: str = Form(...),
-    make_executable: bool = Form(False)
+    path: str = Form(None)
 ):
     """
-    Upload a binary file to the sandbox filesystem
-    
-    Args:
-        file: The file to upload
-        path: The destination path where the file should be saved
-        make_executable: Whether to make the file executable
-        
-    Returns:
-        Response with the result of the upload operation
+    Upload file using streaming
     """
-    # Read file content
-    content = await file.read()
+    if not path:
+        path = f"/tmp/{file.filename}"
     
-    # Upload file
     result = await file_service.upload_file(
-        file_content=content,
-        destination_path=path,
-        make_executable=make_executable
+        path=path,
+        file_stream=file
     )
     
-    # Construct response
     return Response(
         success=True,
-        message=f"File uploaded successfully, size: {result.size} bytes",
+        message="File uploaded successfully",
         data=result.model_dump()
     )
 
-@router.post("/exists", response_model=Response)
-async def check_file_exists(request: FileExistsRequest):
+@router.get("/download")
+async def download_file(path: str):
     """
-    检查文件或目录是否存在
-    
-    Args:
-        request: 包含要检查的路径
-        
-    Returns:
-        包含存在状态的响应
+    Download file using FileResponse
     """
-    result = await file_service.file_exists(path=request.path)
+    # Check if file exists (this will raise appropriate exception if not found)
+    file_service.ensure_file(path)
     
-    # 构建响应
-    return Response(
-        success=True,
-        message="File existence check completed",
-        data=result.model_dump()
+    # Determine filename from path
+    filename = path.split('/')[-1]
+    
+    return FileResponse(
+        path=path,
+        filename=filename,
+        media_type='application/octet-stream'
     )
-
-@router.post("/download")
-async def download_file(request: FileDownloadRequest):
-    """
-    下载文件
-    
-    Args:
-        path: 要下载的文件路径
-        
-    Returns:
-        文件的二进制内容，作为下载响应
-    """
-    try:
-        # 获取文件二进制内容
-        file_path = request.path
-        content = await file_service.download_file(file_path=file_path)
-        
-        # 获取文件名
-        file_name = os.path.basename(file_path)
-
-        is_ascii = all(ord(c) < 128 for c in file_name)
-        
-        if is_ascii:
-            # 如果是ASCII文件名，直接使用
-            content_disposition = f'attachment; filename="{file_name}"'
-        else:
-            # 对于非ASCII文件名，提供两种形式
-            # 1. filename参数使用ASCII文件名（可以是原始名称的简化版或转义版）
-            # 2. filename*参数使用UTF-8编码的完整文件名
-            
-            # 创建一个简单的ASCII文件名版本
-            ascii_filename = re.sub(r'[^\x00-\x7F]', '_', file_name)
-            
-            # 为filename*参数编码UTF-8文件名
-            utf8_filename = quote(file_name)
-            
-            content_disposition = f'attachment; filename="{ascii_filename}"; filename*=UTF-8\'\'{utf8_filename}'
-        
-        # 创建二进制响应
-        return FastAPIResponse(
-            content=content,
-            media_type="application/octet-stream",
-            headers={
-                "Content-Disposition": content_disposition
-            }
-        )
-    except Exception as e:
-        # 出错时返回标准响应格式
-        return Response(
-            success=False,
-            message=str(e),
-            data=None
-        )

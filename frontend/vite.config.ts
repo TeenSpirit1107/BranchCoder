@@ -1,31 +1,33 @@
 import { defineConfig } from 'vite';
-import react from '@vitejs/plugin-react';
+import vue from '@vitejs/plugin-vue';
 import monacoEditorPlugin from 'vite-plugin-monaco-editor';
-import { fileURLToPath, URL } from 'node:url';
+import { resolve } from 'path';
 
 // https://vitejs.dev/config/
 export default defineConfig({
   plugins: [
-    react(),
-    // @ts-expect-error - vite-plugin-monaco-editor类型定义问题
-    monacoEditorPlugin.default({})
+    vue(),
+    (monacoEditorPlugin as any).default({})
   ],
   resolve: {
     alias: {
-      '@': fileURLToPath(new URL('./src', import.meta.url))
+      '@': resolve(__dirname, 'src')
     }
   },
   optimizeDeps: {
-    esbuildOptions: {
-      target: 'esnext',
-      supported: {
-        'top-level-await': true
-      }
-    },
-    include: ['pdfjs-dist', '@react-pdf-viewer/core', '@react-pdf-viewer/default-layout']
+    exclude: ['lucide-vue-next'],
   },
-  build: {
-    target: 'esnext'
+  server: {
+    host: true,
+    port: 5173,
+    ...(process.env.BACKEND_URL && {
+      proxy: {
+        '/api': {
+          target: process.env.BACKEND_URL,
+          changeOrigin: true,
+          ws: true,
+        },
+      },
+    }),
   },
-  assetsInclude: ['**/*.pdf']
 }); 

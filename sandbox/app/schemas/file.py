@@ -11,7 +11,7 @@ class FileReadRequest(BaseModel):
     start_line: Optional[int] = Field(None, description="Start line (0-based)")
     end_line: Optional[int] = Field(None, description="End line (not inclusive)")
     sudo: Optional[bool] = Field(False, description="Whether to use sudo privileges")
-
+    max_length: Optional[int] = Field(10000, description="Maximum length of the content to return")
 
 class FileWriteRequest(BaseModel):
     """File write request"""
@@ -42,20 +42,3 @@ class FileFindRequest(BaseModel):
     """File find request"""
     path: str = Field(..., description="Directory path to search")
     glob: str = Field(..., description="Filename pattern (glob syntax)")
-
-
-class FileUploadResponse(BaseModel):
-    """File upload response"""
-    file: str = Field(..., description="Absolute path of the uploaded file")
-    size: int = Field(..., description="Size of the uploaded file in bytes")
-    is_executable: bool = Field(False, description="Whether the file is executable")
-
-
-class FileExistsRequest(BaseModel):
-    """File exists request"""
-    path: str = Field(..., description="Path to check for existence")
-
-
-class FileDownloadRequest(BaseModel):
-    """File download request"""
-    path: str = Field(..., description="Absolute path of the file to download")

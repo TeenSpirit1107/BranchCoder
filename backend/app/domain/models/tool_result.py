@@ -1,7 +1,9 @@
 from pydantic import BaseModel
-from typing import Any, Optional
+from typing import Any, Optional, TypeVar, Generic
 
-class ToolResult(BaseModel):
+T = TypeVar('T')
+
+class ToolResult(BaseModel, Generic[T]):
     success: bool
     message: Optional[str] = None
-    data: Optional[Any] = None
+    data: Optional[T] = None

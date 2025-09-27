@@ -5,7 +5,6 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from typing import Any
 from app.schemas.response import Response
 import logging
-import traceback
 
 # Get logger
 logger = logging.getLogger(__name__)
@@ -44,16 +43,10 @@ class UnauthorizedException(AppException):
 async def app_exception_handler(request: Request, exc: AppException):
     """Handle application custom exceptions"""
     logger.error("Processing application exception: %s", exc.message)
-    # Enrich error payload without breaking existing data shape
-    data: Any
-    if isinstance(exc.data, dict):
-        # Merge with error metadata
-        data = {"error_type": exc.__class__.__name__, **exc.data}
-    elif exc.data is not None:
-        data = {"error_type": exc.__class__.__name__, "details": exc.data}
-    else:
-        data = {"error_type": exc.__class__.__name__}
-    response = Response.error(message=exc.message, data=data)
+    response = Response.error(
+        message=exc.message,
+        data=exc.data
+    )
     return JSONResponse(
         status_code=exc.status_code,
         content=response.model_dump()
@@ -62,7 +55,9 @@ async def app_exception_handler(request: Request, exc: AppException):
 async def http_exception_handler(request: Request, exc: StarletteHTTPException):
     """Handle HTTP exceptions"""
     logger.error("Processing HTTP exception: %s (code: %d)", exc.detail, exc.status_code)
-    response = Response.error(message=str(exc.detail), data={"error_type": "HTTPException"})
+    response = Response.error(
+        message=str(exc.detail)
+    )
     return JSONResponse(
         status_code=exc.status_code,
         content=response.model_dump()
@@ -80,10 +75,10 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
         })
     
     logger.error("Validation error: %s", error_messages)
-    response = Response.error(message="Request data validation failed", data={
-        "error_type": "RequestValidationError",
-        "errors": error_messages
-    })
+    response = Response.error(
+        message="Request data validation failed",
+        data=error_messages
+    )
     return JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
         content=response.model_dump()
@@ -93,14 +88,9 @@ async def general_exception_handler(request: Request, exc: Exception):
     """Handle all other exceptions"""
     error_message = f"Internal server error: {str(exc)}"
     logger.error("Unhandled exception: %s", error_message, exc_info=True)
-    # Capture a short traceback for debugging
-    tb = traceback.format_exc()
-    # Limit traceback size to avoid bloating the response
-    tb_tail = tb[-2000:] if tb else None
-    response = Response.error(message=error_message, data={
-        "error_type": exc.__class__.__name__,
-        "traceback_tail": tb_tail
-    })
+    response = Response.error(
+        message=error_message
+    )
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         content=response.model_dump()

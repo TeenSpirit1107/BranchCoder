@@ -1,7 +1,0 @@
-bind-addr: 0.0.0.0:8443
-auth: none
-cert: false
-user-data-dir: /home/ubuntu/.local/share/code-server
-extensions-dir: /home/ubuntu/.local/share/code-server/extensions
-disable-telemetry: true
-disable-update-check: true 

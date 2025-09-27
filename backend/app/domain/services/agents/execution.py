@@ -1,173 +1,108 @@
-from typing import AsyncGenerator, Optional
-from datetime import datetime
+from typing import AsyncGenerator, Optional, List
 from app.domain.models.plan import Plan, Step, ExecutionStatus
+from app.domain.models.file import FileInfo
+from app.domain.models.message import Message
 from app.domain.services.agents.base import BaseAgent
-from app.domain.models.memory import Memory
-from app.domain.external.llm import LLM, AudioLLM, ImageLLM, VideoLLM, ReasonLLM
+from app.domain.external.llm import LLM
 from app.domain.external.sandbox import Sandbox
 from app.domain.external.browser import Browser
 from app.domain.external.search import SearchEngine
-from app.domain.services.prompts.execution_no_tool import (
-    EXECUTION_SYSTEM_PROMPT_NO_TOOL,
-    EXECUTION_PROMPT,
-    SUMMARIZE_STEP_PROMPT,
-    FLUSH_MEMORY_PROMPT,
-    PERSISTENT_RESULT_PROMPT,
-    REPORT_RESULT_PROMPT,
-)
-
-from app.domain.services.prompts.prompt_manager import PromptManager
-
+from app.domain.external.file import FileStorage
+from app.domain.repositories.agent_repository import AgentRepository
+from app.domain.services.prompts.system import SYSTEM_PROMPT
+from app.domain.services.prompts.execution import EXECUTION_SYSTEM_PROMPT, EXECUTION_PROMPT, SUMMARIZE_PROMPT
 from app.domain.models.event import (
-    AgentEvent,
-    StepFailedEvent,
-    StepCompletedEvent,
-    MessageEvent,
+    BaseEvent,
+    StepEvent,
+    StepStatus,
     ErrorEvent,
-    StepStartedEvent,
-    PauseEvent,
-    ReportEvent
+    MessageEvent,
+    DoneEvent,
+    ToolEvent,
+    ToolStatus,
+    WaitEvent,
 )
+from app.domain.services.tools.base import BaseTool
 from app.domain.services.tools.shell import ShellTool
 from app.domain.services.tools.browser import BrowserTool
 from app.domain.services.tools.search import SearchTool
 from app.domain.services.tools.file import FileTool
-from app.domain.services.tools.message import MessageDeliverArtifactTool
-from app.domain.services.tools.audio import AudioTool
-from app.domain.services.tools.image import ImageTool
-from app.domain.services.tools.video import VideoTool
-from app.domain.services.tools.reasoning import DeepReasoningTool
-from app.domain.services.tools.mcp import McpTool
-from app.infrastructure.logging import setup_agent_logger
+from app.domain.services.tools.message import MessageTool
+from app.domain.utils.json_parser import JsonParser
+import logging
+
+logger = logging.getLogger(__name__)
+
 
 class ExecutionAgent(BaseAgent):
     """
     Execution agent class, defining the basic behavior of execution
     """
 
+    name: str = "execution"
+    system_prompt: str = SYSTEM_PROMPT + EXECUTION_SYSTEM_PROMPT
+    format: str = "json_object"
+
     def __init__(
         self,
-        memory: Memory,
+        agent_id: str,
+        agent_repository: AgentRepository,
         llm: LLM,
-        audio_llm: AudioLLM,
-        image_llm: ImageLLM,
-        video_llm: VideoLLM,
-        reason_llm: ReasonLLM,
-        sandbox: Sandbox,
-        browser: Browser,
-        search_engine: Optional[SearchEngine] = None,
-        type_value: str = "message"
+        tools: List[BaseTool],
+        json_parser: JsonParser,
     ):
-        super().__init__(memory, llm, [   
-            ShellTool(sandbox),
-            BrowserTool(browser),
-            FileTool(sandbox),
-            MessageDeliverArtifactTool(),
-            AudioTool(sandbox, audio_llm, llm),
-            ImageTool(sandbox, image_llm),
-            VideoTool(sandbox, video_llm),
-            DeepReasoningTool(reason_llm),
-            McpTool(
-                sandbox,
-                pre_install_servers=[
-                    "mcp-server-site-search"
-                ]
-            )
-        ])
-        
-        # Only add search tool when search_engine is not None
-        if search_engine:
-            self.tools.append(SearchTool(search_engine))
-        self.system_prompt = PromptManager.insert_datetime(PromptManager.get_system_prompt_with_tools(self.tools, is_executor=True))
-        self.execution_agent_logger = setup_agent_logger("execution_agent")
-
-    @property
-    def shell_tool(self) -> Optional[ShellTool]:
-        """Get the shell tool from tools list"""
-        for tool in self.tools:
-            if isinstance(tool, ShellTool):
-                return tool
-        return None
-
-    async def execute_step(self, plan: Plan, step: Step, message: str) -> AsyncGenerator[AgentEvent, None]:
-        
-        # update prompt
-        try:
-            self.system_prompt = await PromptManager.update_ls(self.system_prompt, self.shell_tool)
-        except Exception as e:
-            self.execution_agent_logger.error(f"更新系统提示词失败: {str(e)}")
-            self.execution_agent_logger.error(f"错误类型: {type(e)}")
-            import traceback
-            self.execution_agent_logger.error(f"错误堆栈: {traceback.format_exc()}")
-            # 继续执行，不因为提示词更新失败而中断整个流程
-        
-        message = EXECUTION_PROMPT.format(goal=plan.goal, all_steps=plan.steps, step=step.description, message=message)
-        
+        super().__init__(
+            agent_id=agent_id,
+            agent_repository=agent_repository,
+            llm=llm,
+            json_parser=json_parser,
+            tools=tools
+        )
+    
+    async def execute_step(self, plan: Plan, step: Step, message: Message) -> AsyncGenerator[BaseEvent, None]:
+        message = EXECUTION_PROMPT.format(
+            step=step.description, 
+            message=message.message,
+            attachments="\n".join(message.attachments),
+            language=plan.language
+        )
         step.status = ExecutionStatus.RUNNING
-        yield StepStartedEvent(step=step, plan=plan)
-
-        # debug H
-        self.execution_agent_logger.info("==="*10)
-        self.execution_agent_logger.info(f"EXECUTOR")
-        self.execution_agent_logger.info(f"self.system_prompt: {self.system_prompt}")
-        self.execution_agent_logger.info("==="*10)
-
+        yield StepEvent(status=StepStatus.STARTED, step=step)
         async for event in self.execute(message):
             if isinstance(event, ErrorEvent):
                 step.status = ExecutionStatus.FAILED
                 step.error = event.error
-                yield StepFailedEvent(
-                    step=Step(
-                        id="sub_task",
-                        description=step.description,
-                        status=ExecutionStatus.FAILED,
-                        error=event.error
-                    ),
-                    plan=Plan(
-                        id=f"sub_plan_{step.id}",
-                        title=f"Sub Plan for {step.id} task",
-                        goal=plan.goal,
-                        steps=[Step(
-                            id="sub_task",
-                            description=step.description,
-                            status=ExecutionStatus.FAILED,
-                            error=event.error
-                        )]
-                    )
-                )
-                return
-            
-            if isinstance(event, PauseEvent):
-                yield event
-                return
-            
-            if isinstance(event, MessageEvent):
+                yield StepEvent(status=StepStatus.FAILED, step=step)
+            elif isinstance(event, MessageEvent):
                 step.status = ExecutionStatus.COMPLETED
-                step.result = event.message
-                yield StepCompletedEvent(step=step, plan=plan)
+                parsed_response = await self.json_parser.parse(event.message)
+                new_step = Step.model_validate(parsed_response)
+                step.success = new_step.success
+                step.result = new_step.result
+                step.attachments = new_step.attachments
+                yield StepEvent(status=StepStatus.COMPLETED, step=step)
+                if step.result:
+                    yield MessageEvent(message=step.result)
+                continue
+            elif isinstance(event, ToolEvent):
+                if event.function_name == "message_ask_user":
+                    if event.status == ToolStatus.CALLING:
+                        yield MessageEvent(message=event.function_args.get("text", ""))
+                    elif event.status == ToolStatus.CALLED:
+                        yield WaitEvent()
+                        return
+                    continue
             yield event
         step.status = ExecutionStatus.COMPLETED
 
-    async def summarize_steps(self) -> AsyncGenerator[AgentEvent, None]:
-        async for event in self.execute(PERSISTENT_RESULT_PROMPT):
-            yield event
-
-        async for event in self.execute(SUMMARIZE_STEP_PROMPT):
+    async def summarize(self) -> AsyncGenerator[BaseEvent, None]:
+        message = SUMMARIZE_PROMPT
+        async for event in self.execute(message):
             if isinstance(event, MessageEvent):
-                self.memory.clear_messages()
-                self.memory.add_message({
-                    "role": "system",
-                    "content": self.system_prompt
-                })
-                self.memory.add_message({
-                    "role": "system",
-                    "content": FLUSH_MEMORY_PROMPT.format(previous_steps=event.message)
-                })
-            yield event
-        
-    async def report_result(self, message: str) -> AsyncGenerator[AgentEvent, None]:
-        async for event in self.execute(REPORT_RESULT_PROMPT.format(message=message)):
-            if isinstance(event, MessageEvent):
-                yield ReportEvent(message=event.message)
-                return
+                logger.debug(f"Execution agent summary: {event.message}")
+                parsed_response = await self.json_parser.parse(event.message)
+                message = Message.model_validate(parsed_response)
+                attachments = [FileInfo(file_path=file_path) for file_path in message.attachments]
+                yield MessageEvent(message=message.message, attachments=attachments)
+                continue
             yield event

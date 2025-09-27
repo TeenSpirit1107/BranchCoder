@@ -11,6 +11,7 @@ class ShellExecRequest(BaseModel):
 class ShellViewRequest(BaseModel):
     """Shell session content view request model"""
     id: str = Field(..., description="Unique identifier of the target shell session")
+    console: Optional[bool] = Field(False, description="Whether to return console records")
 
 
 class ShellWaitRequest(BaseModel):

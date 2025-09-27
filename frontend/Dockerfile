@@ -4,20 +4,17 @@ FROM node:18-alpine as build-stage
 # Set working directory
 WORKDIR /app
 
-# Install pnpm
-RUN npm install -g pnpm
-
-# Copy package.json and pnpm-lock.yaml files
-COPY package.json pnpm-lock.yaml ./
+# Copy package.json and package-lock.json files
+COPY package*.json ./
 
 # Install project dependencies
-RUN pnpm install --frozen-lockfile
+RUN npm ci
 
 # Copy project files
 COPY . .
 
 # Build application - skip type checking
-RUN pnpm run build
+RUN npm run build
 
 # Use nginx as production environment image
 FROM nginx:stable-alpine as production-stage

@@ -7,7 +7,8 @@ class LLM(Protocol):
         self,
         messages: List[Dict[str, str]],
         tools: Optional[List[Dict[str, Any]]] = None,
-        response_format: Optional[Dict[str, Any]] = None
+        response_format: Optional[Dict[str, Any]] = None,
+        tool_choice: Optional[str] = None
     ) -> Dict[str, Any]:
         """Send chat request to AI service
         
@@ -15,61 +16,23 @@ class LLM(Protocol):
             messages: List of messages, including conversation history
             tools: Optional list of tools for function calling
             response_format: Optional response format configuration
-            
+            tool_choice: Optional tool choice configuration
         Returns:
             Response message from AI service
         """
-        pass
+        ... 
 
-    async def custom_ask(
-            self,
-            messages: List[Dict[str, str]],
-            tools: Optional[List[Dict[str, Any]]] = None,
-            model: Optional[str] = None,
-            temperature: Optional[float] = 0,
-    ) -> Dict[str, Any]:
-        """Send chat request to AI service
+    @property
+    def model_name(self) -> str:
+        """Get the model name"""
+        ...
+    
+    @property
+    def temperature(self) -> float:
+        """Get the temperature"""
+        ...
 
-        Args:
-            messages: List of messages, including conversation history
-            tools: Optional list of tools for function calling
-            model: Optional model configuration
-            temperature: Optional temperature configuration
-
-        Returns:
-            Response message from AI service
-        """
-        pass
-
-class ImageLLM(Protocol):
-    pass
-
-class AudioLLM(Protocol):
-    async def audio_to_text(
-        self,
-        audio_path: str,
-        filename: str
-    ) -> str:
-        pass
-
-class VideoLLM(Protocol):
-    async def video_to_text(
-        self,
-        video_uri: str,
-    ) -> str:
-        pass
-
-    async def ask_video(
-        self,
-        video_uri: str,
-        query: str
-    ) -> str:
-        pass
-
-class ReasonLLM(Protocol):
-    async def deep_reasoning(
-        self,
-        problem: str,
-        context: Optional[str] = None
-    ) -> str:
-        pass
+    @property
+    def max_tokens(self) -> int:
+        """Get the max tokens"""
+        ...

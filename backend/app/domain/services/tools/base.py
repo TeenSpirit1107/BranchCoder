@@ -52,7 +52,7 @@ class BaseTool:
         """Initialize base tool class"""
         self._tools_cache = None
     
-    async def get_tools(self) -> List[Dict[str, Any]]:
+    def get_tools(self) -> List[Dict[str, Any]]:
         """Get all registered tools
         
         Returns:
@@ -69,7 +69,7 @@ class BaseTool:
         self._tools_cache = tools
         return tools
     
-    async def has_function(self, function_name: str) -> bool:
+    def has_function(self, function_name: str) -> bool:
         """Check if specified function exists
         
         Args:
@@ -82,6 +82,27 @@ class BaseTool:
             if hasattr(method, '_function_name') and method._function_name == function_name:
                 return True
         return False
+    
+    def _filter_parameters(self, method: Callable, kwargs: Dict[str, Any]) -> Dict[str, Any]:
+        """Filter parameters to match method signature
+        
+        Args:
+            method: Target method
+            kwargs: Input parameters
+            
+        Returns:
+            Filtered parameters that match the method signature
+        """
+        # Get method signature
+        sig = inspect.signature(method)
+        
+        # Filter kwargs to only include parameters that the method accepts
+        filtered_kwargs = {}
+        for param_name, param_value in kwargs.items():
+            if param_name in sig.parameters:
+                filtered_kwargs[param_name] = param_value
+        
+        return filtered_kwargs
     
     async def invoke_function(self, function_name: str, **kwargs) -> ToolResult:
         """Invoke specified tool
@@ -98,6 +119,8 @@ class BaseTool:
         """
         for _, method in inspect.getmembers(self, inspect.ismethod):
             if hasattr(method, '_function_name') and method._function_name == function_name:
-                return await method(**kwargs)
+                # Filter parameters to match method signature
+                filtered_kwargs = self._filter_parameters(method, kwargs)
+                return await method(**filtered_kwargs)
         
         raise ValueError(f"Tool '{function_name}' not found") 

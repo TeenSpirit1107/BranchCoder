@@ -5,21 +5,22 @@ import os
 import re
 import glob
 import asyncio
-from typing import Optional
-import binascii
-from charset_normalizer import from_bytes as cn_from_bytes
+import subprocess
+import mimetypes
+from typing import Optional, BinaryIO
+from fastapi import UploadFile
 from app.models.file import (
     FileReadResult, FileWriteResult, FileReplaceResult,
-    FileSearchResult, FileFindResult, FileUploadResponse,
-    FileExistsResult
+    FileSearchResult, FileFindResult, FileUploadResult
 )
+from app.core.exceptions import AppException, ResourceNotFoundException, BadRequestException
 
 
 class FileService:
     """File Operation Service"""
 
     async def read_file(self, file: str, start_line: Optional[int] = None, 
-                 end_line: Optional[int] = None, sudo: bool = False) -> FileReadResult:
+                 end_line: Optional[int] = None, sudo: bool = False, max_length: Optional[int] = 10000) -> FileReadResult:
         """
         Asynchronously read file content
         
@@ -31,40 +32,13 @@ class FileService:
         """
         # Check if file exists
         if not os.path.exists(file) and not sudo:
-            # 返回可读错误文本而不是抛异常
-            return FileReadResult(content=f"File does not exist: {file}", file=file)
-
-        # Helper: hex preview for binary files (first N bytes)
-        def hex_preview(data: bytes, limit: int = 256) -> str:
-            head = data[:limit]
-            hex_str = binascii.hexlify(head).decode("ascii")
-            grouped = " ".join(hex_str[i:i+2] for i in range(0, len(hex_str), 2))
-            note = "\n...[truncated hex preview]..." if len(data) > limit else ""
-            return f"[binary file detected; showing first {len(head)} bytes in hex]\n{grouped}{note}"
-
-        # Helper: attempt robust decoding using charset-normalizer
-        def robust_decode(data: bytes) -> str:
-            try:
-                matches = cn_from_bytes(data)
-                best = matches.best() if hasattr(matches, "best") else None
-                if best and getattr(best, "encoding", None):
-                    encoding = best.encoding
-                    try:
-                        return data.decode(encoding)
-                    except Exception:
-                        # Fallback to replace if strict decoding fails
-                        return data.decode(encoding, errors="replace")
-            except Exception:
-                # If detection fails, continue to common fallbacks
-                pass
-
-            # 4) As a last resort, decode with replacement to avoid exceptions
-            return hex_preview(data)
-
+            raise ResourceNotFoundException(f"File does not exist: {file}")
+        
         try:
-            raw: bytes
+            content = ""
+            
+            # Read with sudo
             if sudo:
-                # Read with sudo (bytes)
                 command = f"sudo cat '{file}'"
                 process = await asyncio.create_subprocess_shell(
                     command,
@@ -72,38 +46,41 @@ class FileService:
                     stderr=asyncio.subprocess.PIPE
                 )
                 stdout, stderr = await process.communicate()
+                
                 if process.returncode != 0:
-                    # Return a readable message rather than throwing generic 500
-                    return FileReadResult(content=f"Failed to read file: {stderr.decode(errors='replace')}", file=file)
-                raw = stdout
+                    raise BadRequestException(f"Failed to read file: {stderr.decode()}")
+                
+                content = stdout.decode('utf-8')
             else:
-                # Asynchronously read file bytes to avoid UnicodeDecodeError
-                def read_file_bytes():
+                # Asynchronously read file
+                def read_file_async():
                     try:
-                        with open(file, 'rb') as f:
+                        with open(file, 'r', encoding='utf-8') as f:
                             return f.read()
                     except Exception as e:
-                        return str(e).encode()
-                raw = await asyncio.to_thread(read_file_bytes)
-
-            # Decide how to present content
-            content = robust_decode(raw)
-
-            # Process line range on decoded content
+                        raise AppException(message=f"Failed to read file: {str(e)}")
+                
+                # Execute IO operation in thread pool
+                content = await asyncio.to_thread(read_file_async)
+            
+            # Process line range
             if start_line is not None or end_line is not None:
                 lines = content.splitlines()
                 start = start_line if start_line is not None else 0
                 end = end_line if end_line is not None else len(lines)
                 content = '\n'.join(lines[start:end])
-
+            
+            if max_length is not None and max_length > 0 and len(content) > max_length:
+                content = content[:max_length] + "(truncated)"
+            
             return FileReadResult(
                 content=content,
                 file=file
             )
         except Exception as e:
-            # Fallback: never explode with 500 due to decoding; return readable error text
-            safe_message = f"Failed to read file safely: {str(e)}"
-            return FileReadResult(content=safe_message, file=file)
+            if isinstance(e, BadRequestException) or isinstance(e, ResourceNotFoundException):
+                raise e
+            raise AppException(message=f"Failed to read file: {str(e)}")
 
     async def write_file(self, file: str, content: str, append: bool = False,
                   leading_newline: bool = False, trailing_newline: bool = False,
@@ -152,7 +129,7 @@ class FileService:
                 stdout, stderr = await process.communicate()
                 
                 if process.returncode != 0:
-                    return FileWriteResult(file=file, bytes_written=0)
+                    raise BadRequestException(f"Failed to write file: {stderr.decode()}")
                 
                 # Clean up temporary file
                 os.unlink(temp_file)
@@ -172,8 +149,10 @@ class FileService:
                 file=file,
                 bytes_written=bytes_written
             )
-        except Exception:
-            return FileWriteResult(file=file, bytes_written=0)
+        except Exception as e:
+            if isinstance(e, BadRequestException):
+                raise e
+            raise AppException(message=f"Failed to write file: {str(e)}")
 
     async def str_replace(self, file: str, old_str: str, new_str: str, 
                    sudo: bool = False) -> FileReplaceResult:
@@ -231,8 +210,8 @@ class FileService:
         # Compile regular expression
         try:
             pattern = re.compile(regex)
-        except Exception:
-            return FileSearchResult(file=file, matches=[], line_numbers=[])
+        except Exception as e:
+            raise BadRequestException(f"Invalid regular expression: {str(e)}")
         
         # Find matches (use async processing for possibly large files)
         def process_lines():
@@ -260,7 +239,7 @@ class FileService:
         """
         # Check if path exists
         if not os.path.exists(path):
-            return FileFindResult(path=path, files=[])
+            raise ResourceNotFoundException(f"Directory does not exist: {path}")
         
         # Asynchronously find files
         def glob_async():
@@ -274,111 +253,58 @@ class FileService:
             files=files
         )
 
-    async def upload_file(self, file_content: bytes, 
-                   destination_path: str, make_executable: bool = False) -> FileUploadResponse:
+    async def upload_file(self, path: str, file_stream: UploadFile) -> FileUploadResult:
         """
-        Asynchronously upload a binary file to the filesystem
+        Upload file using streaming for large files
         
         Args:
-            file_content: Binary content of the file
-            destination_path: Absolute path to save the file to
-            make_executable: Whether to make the file executable
-            
-        Returns:
-            FileUploadResponse with the result of the operation
+            path: Target file path to save uploaded file
+            file_stream: File stream from FastAPI UploadFile
         """
         try:
-            # Ensure the directory exists
-            os.makedirs(os.path.dirname(destination_path), exist_ok=True)
+            chunk_size = 8192  # 8KB chunks
+            total_size = 0
             
-            # Write the file
-            def write_file_async():
-                with open(destination_path, 'wb') as f:
-                    f.write(file_content)
-                
-                # Make executable if requested
-                if make_executable:
-                    mode = os.stat(destination_path).st_mode
-                    os.chmod(destination_path, mode | 0o111)  # Add execute permission for all
-                
-                return os.path.getsize(destination_path)
-                
-            size = await asyncio.to_thread(write_file_async)
+            # Ensure directory exists
+            os.makedirs(os.path.dirname(path), exist_ok=True)
             
-            # Check if the file is executable
-            is_executable = False
-            if os.path.exists(destination_path):
-                mode = os.stat(destination_path).st_mode
-                is_executable = bool(mode & 0o111)  # Check if any execute bit is set
+            # Stream write directly to target file
+            def write_stream_direct():
+                nonlocal total_size
+                with open(path, 'wb') as f:
+                    while True:
+                        chunk = file_stream.file.read(chunk_size)
+                        if not chunk:
+                            break
+                        f.write(chunk)
+                        total_size += len(chunk)
             
-            return FileUploadResponse(
-                file=destination_path,
-                size=size,
-                is_executable=is_executable
+            await asyncio.to_thread(write_stream_direct)
+            
+            return FileUploadResult(
+                file_path=path,
+                file_size=total_size,
+                success=True
             )
-        except Exception:
-            return FileUploadResponse(file=destination_path, size=0, is_executable=False)
+        except Exception as e:
+            raise AppException(message=f"Failed to upload file: {str(e)}")
 
-    async def download_file(self, file_path: str) -> bytes:
+    def ensure_file(self, path: str) -> None:
         """
-        Asynchronously read binary file content
+        Ensure file exists
         
         Args:
-            file_path: Absolute path of the file to download
-            
-        Returns:
-            Binary content of the file
-        """
-        # Check if file exists
-        if not os.path.exists(file_path):
-            return b""
-            
-        if not os.path.isfile(file_path):
-            return b""
-            
-        try:
-            # Asynchronously read file
-            def read_file_async():
-                try:
-                    with open(file_path, 'rb') as f:
-                        return f.read()
-                except Exception:
-                    return b""
-            
-            # Execute IO operation in thread pool
-            content = await asyncio.to_thread(read_file_async)
-            return content
-        except Exception:
-            return b""
-
-    async def file_exists(self, path: str) -> FileExistsResult:
-        """
-        检查文件或目录是否存在
-        
-        Args:
-            path: 要检查的文件或目录路径
-            
-        Returns:
-            FileExistsResult: 包含文件存在状态的结果
+            path: Path of the file to check
         """
         try:
-            # 异步执行文件系统检查
-            def check_exists_async():
-                exists = os.path.exists(path)
-                is_file = os.path.isfile(path) if exists else None
-                is_dir = os.path.isdir(path) if exists else None
-                return exists, is_file, is_dir
-            
-            exists, is_file, is_dir = await asyncio.to_thread(check_exists_async)
-            
-            return FileExistsResult(
-                path=path,
-                exists=exists,
-                is_file=is_file,
-                is_dir=is_dir
-            )
-        except Exception:
-            return FileExistsResult(path=path, exists=False, is_file=None, is_dir=None)
+            # Check if file exists
+            if not os.path.exists(path):
+                raise ResourceNotFoundException(f"File does not exist: {path}")
+                    
+        except Exception as e:
+            if isinstance(e, (BadRequestException, ResourceNotFoundException)):
+                raise e
+            raise AppException(message=f"Failed to ensure file: {str(e)}")
 
 
 # Service instance
