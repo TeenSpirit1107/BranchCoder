@@ -6,12 +6,16 @@ class Settings(BaseSettings):
     
     # Model provider configuration
     api_key: str | None = None
-    api_base: str = "https://api.deepseek.com/v1"
+    api_base: str = "https://api.openai.com/v1"
     
     # Model configuration
-    model_name: str = "deepseek-chat"
+    model_name: str = "gpt-5-nano"
     temperature: float = 0.7
     max_tokens: int = 2000
+
+    # Rag configuration
+    embedding_model_name: str = "text-embedding-3-small"
+    ranking_model_name: str = "gpt-5-nano"
     
     # MongoDB configuration
     mongodb_uri: str = "mongodb://mongodb:27017"
