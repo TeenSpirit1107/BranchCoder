@@ -101,6 +101,12 @@ class DockerSandbox(Sandbox):
                     "HTTPS_PROXY": settings.sandbox_https_proxy,
                     "HTTP_PROXY": settings.sandbox_http_proxy,
                     "NO_PROXY": settings.sandbox_no_proxy
+                },
+                "volumes": {
+                    settings.upload_host_abs_path: {
+                        "bind": "/home/ubuntu/upload",
+                        "mode": "rw",
+                    }
                 }
             }
             

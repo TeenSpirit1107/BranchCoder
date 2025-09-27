@@ -25,7 +25,7 @@ class RagService:
             initial_candidates=initial_candidates,
         )
 
-    async def initiate(self, workspace_dir):
+    async def initiate(self, workspace_dir='/app/upload'):
         description_result = await self.description_generator.run(workspace_dir=workspace_dir)
         logger.info(f"description generation finish")
         self.indexing_service.load_from_model(description_result)

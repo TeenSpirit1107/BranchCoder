@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     # Rag configuration
     embedding_model_name: str = "text-embedding-3-small"
     ranking_model_name: str = "gpt-5-nano"
+    upload_host_abs_path: str = "/home/yf/Workspace/branch_coder/upload"
     
     # MongoDB configuration
     mongodb_uri: str = "mongodb://mongodb:27017"
