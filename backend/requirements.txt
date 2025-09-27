@@ -21,3 +21,4 @@ python-multipart
 mcp>=1.9.0
 pyjwt[crypto]>=2.8.0
 cryptography>=3.4.8
+llama_index
