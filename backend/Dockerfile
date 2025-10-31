@@ -3,7 +3,8 @@ FROM python:3.12-slim
 WORKDIR /app
 
 # Install curl
-RUN apt-get update && apt-get install -y curl
+RUN sed -i 's|http://deb.debian.org/debian|https://deb.debian.org/debian|g' /etc/apt/sources.list.d/debian.sources && apt-get update && apt-get install -y curl
+
 
 # Install uv
 RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
