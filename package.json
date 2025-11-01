@@ -1,0 +1,90 @@
+{
+  "name": "ai-chat-sidebar",
+  "displayName": "AI Chat Sidebar",
+  "description": "AI对话侧边栏扩展",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.74.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "aiChat",
+          "title": "AI Chat",
+          "icon": "$(comment-discussion)"
+        }
+      ]
+    },
+    "views": {
+      "aiChat": [
+        {
+          "id": "aiChat.chatView",
+          "name": "Chat",
+          "type": "webview",
+          "when": "true"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "aiChat.openChat",
+        "title": "Open AI Chat",
+        "category": "AI Chat",
+        "icon": "$(comment-discussion)"
+      },
+      {
+        "command": "aiChat.sendMessage",
+        "title": "Send Message",
+        "icon": "$(send)"
+      },
+      {
+        "command": "aiChat.clearChat",
+        "title": "Clear Chat",
+        "icon": "$(clear-all)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "aiChat.clearChat",
+          "when": "view == aiChat.chatView",
+          "group": "navigation"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "AI Chat",
+      "properties": {
+        "aiChat.pythonPath": {
+          "type": "string",
+          "default": "python3",
+          "description": "Path to Python interpreter"
+        },
+        "aiChat.aiScriptPath": {
+          "type": "string",
+          "default": "python/ai_service.py",
+          "description": "Path to AI service Python script"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.74.0",
+    "@types/node": "^16.18.0",
+    "typescript": "^4.9.4"
+  }
+}
+
