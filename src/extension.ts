@@ -6,8 +6,14 @@ let chatPanel: ChatPanel | undefined;
 export function activate(context: vscode.ExtensionContext) {
     console.log('AI Chat Extension is activating...');
     
+    // Create output channel for AI service logs
+    const outputChannel = vscode.window.createOutputChannel('AI Service');
+    
+    // Dispose output channel when extension deactivates
+    context.subscriptions.push(outputChannel);
+    
     // Register the chat view
-    const provider = new ChatViewProvider(context.extensionUri, context.extensionPath);
+    const provider = new ChatViewProvider(context.extensionUri, context.extensionPath, outputChannel);
     
     try {
         const registration = vscode.window.registerWebviewViewProvider(
@@ -79,6 +85,7 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
     constructor(
         private readonly _extensionUri: vscode.Uri,
         private readonly _extensionPath: string,
+        private readonly _outputChannel: vscode.OutputChannel,
     ) { }
 
     public resolveWebviewView(
@@ -99,7 +106,7 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
         };
 
         // Create chat panel and set initial content
-        this.chatPanel = new ChatPanel(webviewView.webview, this._extensionUri, this._extensionPath);
+        this.chatPanel = new ChatPanel(webviewView.webview, this._extensionUri, this._extensionPath, this._outputChannel);
         this.chatPanel.update();
 
         // Handle messages from webview

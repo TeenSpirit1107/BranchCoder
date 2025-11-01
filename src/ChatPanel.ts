@@ -9,7 +9,8 @@ export class ChatPanel {
     constructor(
         private readonly webview: vscode.Webview,
         private readonly extensionUri: vscode.Uri,
-        private readonly extensionPath?: string
+        private readonly extensionPath?: string,
+        private readonly outputChannel?: vscode.OutputChannel
     ) {
         // Don't update here, wait for webview to be ready
     }
@@ -102,6 +103,14 @@ export class ChatPanel {
             let output = '';
             let errorOutput = '';
 
+            // Add separator to output channel for this request
+            if (this.outputChannel) {
+                const timestamp = new Date().toLocaleString();
+                this.outputChannel.appendLine(`\n${'='.repeat(80)}`);
+                this.outputChannel.appendLine(`[${timestamp}] Processing request: ${message.substring(0, 50)}${message.length > 50 ? '...' : ''}`);
+                this.outputChannel.appendLine('='.repeat(80));
+            }
+
             // Send message to Python process
             pythonProcess.stdin.write(JSON.stringify({
                 message: message,
@@ -114,25 +123,47 @@ export class ChatPanel {
                 output += data.toString();
             });
 
+            // Send stderr logs to OutputChannel
             pythonProcess.stderr.on('data', (data: Buffer) => {
-                errorOutput += data.toString();
+                const logMessage = data.toString();
+                errorOutput += logMessage;
+                
+                // Output to VS Code OutputChannel for better visibility
+                if (this.outputChannel) {
+                    this.outputChannel.append(logMessage);
+                }
             });
 
             pythonProcess.on('close', (code: number | null) => {
                 if (code === 0) {
                     try {
                         const response = JSON.parse(output.trim());
+                        if (this.outputChannel) {
+                            this.outputChannel.appendLine(`[SUCCESS] Request completed successfully\n`);
+                        }
                         resolve(response.response || response.message || output.trim());
                     } catch (e) {
+                        if (this.outputChannel) {
+                            this.outputChannel.appendLine(`[ERROR] Error parsing JSON response: ${e}\n`);
+                        }
                         resolve(output.trim());
                     }
                 } else {
-                    reject(new Error(errorOutput || `Python process exited with code ${code}`));
+                    const errorMsg = errorOutput || `Python process exited with code ${code}`;
+                    if (this.outputChannel) {
+                        this.outputChannel.appendLine(`[ERROR] Python process error (exit code ${code}): ${errorMsg}\n`);
+                        this.outputChannel.show(true); // Show output channel on error
+                    }
+                    reject(new Error(errorMsg));
                 }
             });
 
             pythonProcess.on('error', (error: Error) => {
-                reject(new Error(`Failed to start Python process: ${error.message}`));
+                const errorMsg = `Failed to start Python process: ${error.message}`;
+                if (this.outputChannel) {
+                    this.outputChannel.appendLine(`ERROR: ${errorMsg}`);
+                }
+                reject(new Error(errorMsg));
             });
 
             // Timeout after 30 seconds
