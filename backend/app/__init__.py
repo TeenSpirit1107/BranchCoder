@@ -1,3 +1,0 @@
-"""
-Manus AI Agent Backend
-"""
