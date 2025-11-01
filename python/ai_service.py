@@ -50,7 +50,6 @@ async def get_ai_response(message: str, history: List[Dict[str, str]]) -> str:
         # Call LLM client
         result = await llm_client.create_completion(
             messages=messages,
-            temperature=1.0
         )
         
         # Handle tool calls if needed (for now, just return the answer)

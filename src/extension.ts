@@ -1,7 +1,130 @@
 import * as vscode from 'vscode';
+import * as path from 'path';
+import * as fs from 'fs';
+import { spawn } from 'child_process';
 import { ChatPanel } from './ChatPanel';
 
 let chatPanel: ChatPanel | undefined;
+let ragInitializationInProgress = false;
+
+// Initialize RAG service for the current workspace
+async function initializeRAG(workspaceDir: string, extensionPath: string, outputChannel: vscode.OutputChannel): Promise<void> {
+    // Prevent concurrent initializations
+    if (ragInitializationInProgress) {
+        console.log('RAG initialization already in progress, skipping...');
+        return;
+    }
+
+    ragInitializationInProgress = true;
+
+    return new Promise((resolve, reject) => {
+        // Get Python path from configuration
+        const config = vscode.workspace.getConfiguration('aiChat');
+        let pythonPath = config.get<string>('pythonPath', '.venv/bin/python');
+        
+        // Resolve relative Python path relative to extension path
+        let resolvedPythonPath = pythonPath;
+        if (!path.isAbsolute(pythonPath)) {
+            resolvedPythonPath = path.join(extensionPath, pythonPath);
+        }
+        
+        // RAG init script path
+        const ragInitScriptPath = path.join(extensionPath, 'python', 'rag_init_service.py');
+        
+        if (!fs.existsSync(ragInitScriptPath)) {
+            const errorMsg = `RAG init script not found at: ${ragInitScriptPath}`;
+            console.error(errorMsg);
+            outputChannel.appendLine(`ERROR: ${errorMsg}`);
+            ragInitializationInProgress = false;
+            reject(new Error(errorMsg));
+            return;
+        }
+
+        console.log(`Initializing RAG for workspace: ${workspaceDir}`);
+        outputChannel.appendLine(`[RAG Init] Starting RAG initialization for workspace: ${workspaceDir}`);
+
+        // Spawn Python process with extension path as working directory
+        // This ensures Python can find the modules in the python/ directory
+        const pythonProcess = spawn(resolvedPythonPath, [ragInitScriptPath], {
+            stdio: ['pipe', 'pipe', 'pipe'],
+            cwd: extensionPath  // Set working directory to extension path
+        });
+
+        let output = '';
+        let errorOutput = '';
+
+        // Send workspace directory to Python process
+        const inputData = JSON.stringify({ workspace_dir: workspaceDir });
+        pythonProcess.stdin.write(inputData);
+        pythonProcess.stdin.end();
+
+        // Collect output
+        pythonProcess.stdout.on('data', (data: Buffer) => {
+            output += data.toString();
+        });
+
+        // Collect stderr logs
+        pythonProcess.stderr.on('data', (data: Buffer) => {
+            const logMessage = data.toString();
+            errorOutput += logMessage;
+            outputChannel.append(logMessage);
+        });
+
+        pythonProcess.on('close', (code: number | null) => {
+            ragInitializationInProgress = false;
+            
+            if (code === 0) {
+                try {
+                    const response = JSON.parse(output.trim());
+                    if (response.status === 'success') {
+                        console.log('RAG initialization completed successfully');
+                        outputChannel.appendLine(`[RAG Init] ✅ Success: ${response.message}`);
+                        vscode.window.showInformationMessage(`RAG indexing completed for workspace`);
+                        resolve();
+                    } else {
+                        const errorMsg = response.message || 'RAG initialization failed';
+                        console.error('RAG initialization failed:', errorMsg);
+                        outputChannel.appendLine(`[RAG Init] ❌ Failed: ${errorMsg}`);
+                        vscode.window.showWarningMessage(`RAG initialization failed: ${errorMsg}`);
+                        reject(new Error(errorMsg));
+                    }
+                } catch (e) {
+                    const errorMsg = `Failed to parse RAG init response: ${e}`;
+                    outputChannel.appendLine(`[RAG Init] ❌ Error: ${errorMsg}`);
+                    // Log raw output for debugging if parsing fails
+                    if (output) {
+                        outputChannel.appendLine(`[RAG Init] Raw output (first 500 chars): ${output.substring(0, 500)}`);
+                    }
+                    reject(new Error(errorMsg));
+                }
+            } else {
+                const errorMsg = errorOutput || `Python process exited with code ${code}`;
+                console.error('RAG initialization error:', errorMsg);
+                outputChannel.appendLine(`[RAG Init] ❌ Error (exit code ${code}): ${errorMsg}`);
+                vscode.window.showErrorMessage(`RAG initialization failed: ${errorMsg}`);
+                outputChannel.show(true);
+                reject(new Error(errorMsg));
+            }
+        });
+
+        pythonProcess.on('error', (error: Error) => {
+            ragInitializationInProgress = false;
+            const errorMsg = `Failed to start Python process: ${error.message}`;
+            console.error('RAG initialization error:', errorMsg);
+            outputChannel.appendLine(`ERROR: ${errorMsg}`);
+            reject(new Error(errorMsg));
+        });
+
+        // Timeout after 5 minutes (RAG indexing can take time)
+        setTimeout(() => {
+            pythonProcess.kill();
+            ragInitializationInProgress = false;
+            const errorMsg = 'RAG initialization timed out after 5 minutes';
+            outputChannel.appendLine(`ERROR: ${errorMsg}`);
+            reject(new Error(errorMsg));
+        }, 300000); // 5 minutes
+    });
+}
 
 export function activate(context: vscode.ExtensionContext) {
     console.log('AI Chat Extension is activating...');
@@ -11,6 +134,47 @@ export function activate(context: vscode.ExtensionContext) {
     
     // Dispose output channel when extension deactivates
     context.subscriptions.push(outputChannel);
+
+    // Initialize RAG when workspace is opened
+    const initializeRAGForWorkspace = async () => {
+        const workspaceFolders = vscode.workspace.workspaceFolders;
+        if (workspaceFolders && workspaceFolders.length > 0) {
+            // Use the first workspace folder
+            const workspaceDir = workspaceFolders[0].uri.fsPath;
+            console.log(`Workspace detected: ${workspaceDir}`);
+            
+            try {
+                await initializeRAG(workspaceDir, context.extensionPath, outputChannel);
+            } catch (error: any) {
+                console.error('Failed to initialize RAG:', error);
+                // Don't show error to user as this might be expected in some cases
+            }
+        } else {
+            console.log('No workspace folder detected, skipping RAG initialization');
+        }
+    };
+
+    // Initialize RAG on activation if workspace is already open
+    initializeRAGForWorkspace();
+
+    // Listen for workspace folder changes
+    context.subscriptions.push(
+        vscode.workspace.onDidChangeWorkspaceFolders(async (event) => {
+            console.log('Workspace folders changed');
+            // When workspace folders are added, initialize RAG for new folders
+            if (event.added.length > 0) {
+                for (const folder of event.added) {
+                    const workspaceDir = folder.uri.fsPath;
+                    console.log(`New workspace folder added: ${workspaceDir}`);
+                    try {
+                        await initializeRAG(workspaceDir, context.extensionPath, outputChannel);
+                    } catch (error: any) {
+                        console.error(`Failed to initialize RAG for ${workspaceDir}:`, error);
+                    }
+                }
+            }
+        })
+    );
     
     // Register the chat view
     const provider = new ChatViewProvider(context.extensionUri, context.extensionPath, outputChannel);

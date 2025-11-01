@@ -13,7 +13,7 @@ from llama_index.core import Document, VectorStoreIndex, StorageContext, load_in
 from llama_index.core.postprocessor import LLMRerank
 
 
-from app.infrastructure.external.llm.rag_model import (
+from rag_llm import (
     init_openai_embedding,
     init_openai_llm,
     DEFAULT_EMBED_MODEL,

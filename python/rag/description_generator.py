@@ -1,15 +1,16 @@
-import logging
 import os
 from pathlib import Path
 from typing import Dict, List, Tuple
 from pydantic import BaseModel
 import json
 
-from app.domain.external import LLM
-from app.domain.services.rag.function_slicer import FunctionSlice, WorkspaceFunctionSlices, FunctionSlicer
-from app.domain.services.rag.class_slicer import ClassSlice, ClassSlicer
+from llm_client import AsyncChatClientWrapper
+from rag.function_slicer import FunctionSlice, WorkspaceFunctionSlices, FunctionSlicer
+from rag.class_slicer import ClassSlice, ClassSlicer
+from logger import Logger
 
-logger = logging.getLogger(__name__)
+# Initialize logger instance
+logger = Logger('description_generator', log_to_file=False)
 
 # -------------------------------------
 # New models for descriptions & outputs
@@ -88,7 +89,7 @@ class DescriptionGenerator:
 
     def __init__(
             self,
-            llm: LLM,
+            llm: AsyncChatClientWrapper,
     ):
         self.llm = llm
 
@@ -235,14 +236,12 @@ class DescriptionGenerator:
             prompt = self._build_prompt(rel_file, file_text, fns, file_classes)
             logger.info(prompt)
             logger.info(current/total)
-            resp = await self.llm.custom_ask(
-                model='gpt-5-nano',
-                # temperature=0.1,
+            resp = await self.llm.create_completion(
                 messages=[{"role": "user", "content": prompt}],
             )
             logger.info(resp)
             try:
-                content = resp.content  # type: ignore[attr-defined]
+                content = resp.get("answer", "") if isinstance(resp, dict) else ""
             except Exception as e:
                 logger.error(e)
                 content = ""
@@ -322,7 +321,7 @@ class DescriptionGenerator:
                 )
                 described_classes_acc.append(described_class)
 
-        print('finished')
+        logger.info('Description generation finished')
         # 直接构造最终结果，functions 与 classes 为列表
         final_result = DescribeOutput(
             files=file_descs,

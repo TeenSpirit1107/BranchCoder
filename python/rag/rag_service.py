@@ -1,17 +1,18 @@
-import logging
 from typing import Optional
 
-from app.domain.external.llm import LLM
-from app.domain.services.rag.description_generator import DescriptionGenerator
-from app.domain.services.rag.indexing import IndexingService
+from llm_client import AsyncChatClientWrapper
+from rag.description_generator import DescriptionGenerator
+from rag.indexing import IndexingService
+from logger import Logger
 
-logger = logging.getLogger(__name__)
+# Initialize logger instance
+logger = Logger('rag_service', log_to_file=False)
 
 class RagService:
 
     def __init__(
             self,
-            llm: LLM,
+            llm: AsyncChatClientWrapper,
             enable_rerank: Optional[bool] = True,
             rerank_top_n: Optional[int] = 10,
             initial_candidates: Optional[int] = 30, # 重排前每类候选数
