@@ -62,7 +62,7 @@ export class ChatPanel {
         return new Promise((resolve, reject) => {
             // Get Python AI script path from configuration
             const config = vscode.workspace.getConfiguration('aiChat');
-            const pythonPath = config.get<string>('pythonPath', 'python3');
+            let pythonPath = config.get<string>('pythonPath', '.venv/bin/python');
             // Get extension path - use the provided extensionPath directly
             let extPath = this.extensionPath;
             if (!extPath) {
@@ -95,8 +95,15 @@ export class ChatPanel {
             }
             console.log('Using Python script:', aiScriptPath);
 
+            // Resolve relative Python path relative to extension path
+            let resolvedPythonPath = pythonPath;
+            if (!path.isAbsolute(pythonPath)) {
+                resolvedPythonPath = path.join(extPath, pythonPath);
+            }
+            console.log('Using Python interpreter:', resolvedPythonPath);
+
             // Spawn Python process
-            const pythonProcess = spawn(pythonPath, [aiScriptPath], {
+            const pythonProcess = spawn(resolvedPythonPath, [aiScriptPath], {
                 stdio: ['pipe', 'pipe', 'pipe']
             });
 

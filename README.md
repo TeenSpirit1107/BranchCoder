@@ -11,24 +11,77 @@
 
 ## 安装
 
-1. 安装依赖：
+### 前置要求
+
+- Node.js 和 npm
+- Python 3.9 或更高版本
+- [uv](https://github.com/astral-sh/uv)（推荐的 Python 包管理器）
+
+### 安装步骤
+
+1. 安装 Node.js 依赖：
 ```bash
 npm install
 ```
 
-2. 编译 TypeScript：
+2. 设置 Python 环境（使用 uv）：
+
+```bash
+# 安装 uv（如果尚未安装）
+# macOS/Linux:
+curl -LsSf https://astral.sh/uv/install.sh | sh
+# 或使用 pip:
+# pip install uv
+
+# 创建虚拟环境
+uv venv
+
+# 激活虚拟环境
+# macOS/Linux:
+source .venv/bin/activate
+# Windows:
+# .venv\Scripts\activate
+
+# 安装 Python 依赖
+uv sync
+```
+
+3. 配置 VS Code 扩展：
+
+在 VS Code 设置中，将 `aiChat.pythonPath` 设置为 uv 虚拟环境中的 Python 解释器路径：
+
+- macOS/Linux: `.venv/bin/python`（相对于项目根目录）
+- Windows: `.venv\Scripts\python.exe`（相对于项目根目录）
+
+或者使用绝对路径。
+
+4. 编译 TypeScript：
 ```bash
 npm run compile
 ```
 
-3. 按 `F5` 在扩展开发主机中运行
+5. 按 `F5` 在扩展开发主机中运行
 
 ## 配置
 
 在 VS Code 设置中配置以下选项：
 
-- `aiChat.pythonPath`: Python 解释器路径（默认: `python3`）
+- `aiChat.pythonPath`: Python 解释器路径
+  - 默认: `python3`
+  - 使用 uv 环境时: `.venv/bin/python`（Linux/macOS）或 `.venv\Scripts\python.exe`（Windows）
+  - 可以使用绝对路径或相对于项目根目录的路径
 - `aiChat.aiScriptPath`: AI 服务脚本路径（默认: `python/ai_service.py`）
+
+### Python 环境变量
+
+确保创建 `.env` 文件（在项目根目录）并配置必要的环境变量：
+
+```bash
+OPENAI_API_KEY=your_api_key_here
+OPENAI_MODEL=your_model_name
+OPENAI_BASE_URL=your_base_url
+OPENAI_PROXY=your_proxy_url  # 可选
+```
 
 ## 使用方法
 

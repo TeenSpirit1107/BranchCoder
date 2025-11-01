@@ -65,8 +65,8 @@
       "properties": {
         "aiChat.pythonPath": {
           "type": "string",
-          "default": "python3",
-          "description": "Path to Python interpreter"
+          "default": ".venv/bin/python",
+          "description": "Path to Python interpreter. For uv environments, use '.venv/bin/python' (Linux/macOS) or '.venv\\Scripts\\python.exe' (Windows). Relative paths are resolved from workspace root."
         },
         "aiChat.aiScriptPath": {
           "type": "string",
