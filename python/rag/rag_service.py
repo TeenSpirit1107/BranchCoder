@@ -1,9 +1,9 @@
 from typing import Optional
 
-from llm_client import AsyncChatClientWrapper
+from llm.chat_llm import AsyncChatClientWrapper
 from rag.description_generator import DescriptionGenerator
 from rag.indexing import IndexingService
-from logger import Logger
+from utils.logger import Logger
 
 # Initialize logger instance
 logger = Logger('rag_service', log_to_file=False)

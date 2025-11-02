@@ -15,7 +15,7 @@ load_dotenv()
 
 # ======= OpenAI 配置（从环境变量读取）=======
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-OPENAI_API_BASE = os.getenv("OPENAI_BASE_URL") or os.getenv("OPENAI_API_BASE")
+OPENAI_API_BASE = os.getenv("OPENAI_BASE_URL")
 proxy = os.getenv("OPENAI_PROXY")
 
 # Set proxy if provided

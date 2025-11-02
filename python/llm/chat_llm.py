@@ -40,7 +40,7 @@ class AsyncChatClientWrapper:
         )
         self.model = model
 
-    async def create_completion(
+    async def ask(
         self,
         messages: List[Dict[str, Any]],
         temperature: float = 1,

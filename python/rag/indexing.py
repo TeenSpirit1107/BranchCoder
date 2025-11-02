@@ -19,7 +19,7 @@ from llama_index.core import Document, VectorStoreIndex, StorageContext, load_in
 from llama_index.core.postprocessor import LLMRerank
 
 
-from rag_llm import (
+from llm.rag_llm import (
     init_openai_embedding,
     init_openai_llm,
     DEFAULT_EMBED_MODEL,

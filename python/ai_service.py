@@ -9,8 +9,8 @@ import json
 import sys
 import asyncio
 from typing import List, Dict
-from logger import Logger
-from llm_client import AsyncChatClientWrapper
+from utils.logger import Logger
+from llm.chat_llm import AsyncChatClientWrapper
 
 # Initialize logger (logs to stderr by default, no file logging)
 # To enable file logging, set log_to_file=True
@@ -48,7 +48,7 @@ async def get_ai_response(message: str, history: List[Dict[str, str]]) -> str:
         messages.append({"role": "user", "content": message})
         
         # Call LLM client
-        result = await llm_client.create_completion(
+        result = await llm_client.ask(
             messages=messages,
         )
         

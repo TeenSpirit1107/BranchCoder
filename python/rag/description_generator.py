@@ -6,10 +6,10 @@ from pydantic import BaseModel
 import json
 from dotenv import load_dotenv
 
-from llm_client import AsyncChatClientWrapper
+from llm.chat_llm import AsyncChatClientWrapper
 from rag.function_slicer import FunctionSlice, WorkspaceFunctionSlices, FunctionSlicer
 from rag.class_slicer import ClassSlice, ClassSlicer
-from logger import Logger
+from utils.logger import Logger
 
 # Load environment variables from .env file
 load_dotenv()
@@ -18,7 +18,7 @@ load_dotenv()
 logger = Logger('description_generator', log_to_file=False)
 
 # Concurrency limit for description generation (from .env file, default: 2)
-DEFAULT_DESCRIPTION_CONCURRENCY = int(os.getenv("RAG_DESCRIPTION_CONCURRENCY", os.getenv("RAG_BUILD_CONCURRENCY", "2")))
+DEFAULT_DESCRIPTION_CONCURRENCY = int(os.getenv("RAG_DESCRIPTION_CONCURRENCY"))
 
 # -------------------------------------
 # New models for descriptions & outputs
@@ -227,7 +227,7 @@ class DescriptionGenerator:
 
         # Use semaphore to limit concurrent LLM calls
         async with self._llm_semaphore:
-            resp = await self.llm.create_completion(
+            resp = await self.llm.ask(
                 messages=[{"role": "user", "content": prompt}],
             )
         logger.info(resp)

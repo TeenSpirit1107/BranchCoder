@@ -11,8 +11,8 @@ import os
 import asyncio
 from pathlib import Path
 
-from logger import Logger
-from llm_client import AsyncChatClientWrapper
+from utils.logger import Logger
+from llm.chat_llm import AsyncChatClientWrapper
 from rag.rag_service import RagService
 
 # Initialize logger
