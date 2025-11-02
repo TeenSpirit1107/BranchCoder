@@ -1,0 +1,9 @@
+{
+  "workspace_dir": "/home/yf/Workspace/deep_learning/assignment1/models",
+  "file_hashes": {
+    "__init__.py": "50bf95f2cf6f1f4d7888212e60486659",
+    "_base_network.py": "dec0476f6678aa01376e80aedc52103c",
+    "softmax_regression.py": "dd0f9ec6476e55ec089451049881c89e",
+    "two_layer_nn.py": "8aa04617af3a246d7b67540bc72c33b3"
+  }
+}
