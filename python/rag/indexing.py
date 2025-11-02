@@ -1,10 +1,16 @@
 # rag_indexer.py
 from __future__ import annotations
 
+import asyncio
 import json
+import os
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 from pathlib import Path
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # ---- LlamaIndex Core ----
 from llama_index.core import Document, VectorStoreIndex, StorageContext, load_index_from_storage
@@ -19,6 +25,9 @@ from rag_llm import (
     DEFAULT_EMBED_MODEL,
     DEFAULT_LLM_MODEL_FOR_RERANK,
 )
+
+# Concurrency limit for async indexing operations (from .env file, default: 2)
+DEFAULT_BUILD_CONCURRENCY = int(os.getenv("RAG_BUILD_CONCURRENCY", "2"))
 
 
 @dataclass
@@ -80,6 +89,13 @@ class Indexing:
         self.class_index: Optional[VectorStoreIndex] = None
 
         self.report: Optional[RAGBuildReport] = None
+
+        # 并发锁：保护索引的构建和检索操作
+        self._build_lock = asyncio.Lock()
+        self._retrieve_lock = asyncio.Lock()
+        
+        # 并发信号量：限制异步构建时的并发数量（从 .env 文件读取，默认: 2）
+        self._build_semaphore = asyncio.Semaphore(DEFAULT_BUILD_CONCURRENCY)
 
         # 设置持久化目录
         self.persist_root_dir = self._resolve_persist_root(persist_root_dir)
@@ -156,43 +172,62 @@ class Indexing:
             docs.append(Document(text=desc, metadata=meta, doc_id=f"{kind}::{i}"))
         return docs, len(docs), skipped
 
-    def build_from_dict(self, data: Dict[str, Any]) -> RAGBuildReport:
-        files = data.get("files", []) or []
-        functions = data.get("functions", []) or []
-        classes = data.get("classes", []) or []
+    async def _build_index_async(self, docs: List[Document]) -> Optional[VectorStoreIndex]:
+        """异步构建单个索引，使用信号量限制并发。"""
+        if not docs:
+            return None
+        async with self._build_semaphore:
+            # Run synchronous from_documents in executor to make it async
+            loop = asyncio.get_event_loop()
+            return await loop.run_in_executor(
+                None, VectorStoreIndex.from_documents, docs
+            )
 
-        file_docs, file_indexed, file_skipped = self._docs_from_items(files, "file")
-        func_docs, func_indexed, func_skipped = self._docs_from_items(functions, "function")
-        class_docs, class_indexed, class_skipped = self._docs_from_items(classes, "class")
+    async def build_from_dict(self, data: Dict[str, Any]) -> RAGBuildReport:
+        """异步构建索引，使用锁保护并发访问，并使用信号量限制构建并发数。"""
+        async with self._build_lock:
+            files = data.get("files", []) or []
+            functions = data.get("functions", []) or []
+            classes = data.get("classes", []) or []
 
-        self.file_index = VectorStoreIndex.from_documents(file_docs) if file_docs else None
-        self.func_index = VectorStoreIndex.from_documents(func_docs) if func_docs else None
-        self.class_index = VectorStoreIndex.from_documents(class_docs) if class_docs else None
+            file_docs, file_indexed, file_skipped = self._docs_from_items(files, "file")
+            func_docs, func_indexed, func_skipped = self._docs_from_items(functions, "function")
+            class_docs, class_indexed, class_skipped = self._docs_from_items(classes, "class")
 
-        # 持久化到磁盘
-        self._persist_index(self.file_index, "file")
-        self._persist_index(self.func_index, "function")
-        self._persist_index(self.class_index, "class")
+            # Build three indexes concurrently with semaphore limiting
+            build_tasks = [
+                self._build_index_async(file_docs),
+                self._build_index_async(func_docs),
+                self._build_index_async(class_docs),
+            ]
+            results = await asyncio.gather(*build_tasks)
+            self.file_index, self.func_index, self.class_index = results
 
-        self.report = RAGBuildReport(
-            files_total=len(files),
-            functions_total=len(functions),
-            classes_total=len(classes),
-            files_indexed=file_indexed,
-            functions_indexed=func_indexed,
-            classes_indexed=class_indexed,
-            files_skipped=file_skipped,
-            functions_skipped=func_skipped,
-            classes_skipped=class_skipped,
-        )
-        return self.report
+            # 持久化到磁盘
+            self._persist_index(self.file_index, "file")
+            self._persist_index(self.func_index, "function")
+            self._persist_index(self.class_index, "class")
 
-    def build_from_json(self, json_path: str) -> RAGBuildReport:
+            self.report = RAGBuildReport(
+                files_total=len(files),
+                functions_total=len(functions),
+                classes_total=len(classes),
+                files_indexed=file_indexed,
+                functions_indexed=func_indexed,
+                classes_indexed=class_indexed,
+                files_skipped=file_skipped,
+                functions_skipped=func_skipped,
+                classes_skipped=class_skipped,
+            )
+            return self.report
+
+    async def build_from_json(self, json_path: str) -> RAGBuildReport:
+        """异步从 JSON 文件构建索引。"""
         with open(json_path, "r", encoding="utf-8") as f:
             data = json.load(f)
-        return self.build_from_dict(data)
+        return await self.build_from_dict(data)
 
-    def build_from_model(self, obj: Any) -> RAGBuildReport:
+    async def build_from_model(self, obj: Any) -> RAGBuildReport:
         """支持直接从 Pydantic/类似对象构建，自动使用 model_dump()/dict()。"""
         if hasattr(obj, "model_dump") and callable(getattr(obj, "model_dump")):
             data = obj.model_dump()
@@ -200,11 +235,11 @@ class Indexing:
             data = obj.dict()
         else:
             raise TypeError("Unsupported object type: expected Pydantic-like with model_dump()/dict().")
-        return self.build_from_dict(data)
+        return await self.build_from_dict(data)
 
     # ---------- 检索 +（可选）重排 ----------
 
-    def retrieve(
+    async def retrieve(
         self,
         query: str,
         top_k: int = 5,
@@ -218,48 +253,52 @@ class Indexing:
           "function": [...],
           "class":    [...]
         }
+        
+        使用异步锁保护并发检索操作。
         """
-        out: Dict[str, List[Dict[str, Any]]] = {"file": [], "function": [], "class": []}
+        async with self._retrieve_lock:
+            out: Dict[str, List[Dict[str, Any]]] = {"file": [], "function": [], "class": []}
 
-        def _do_search(index: Optional[VectorStoreIndex], kind: str) -> None:
-            if index is None:
-                return
+            def _do_search(index: Optional[VectorStoreIndex], kind: str) -> None:
+                if index is None:
+                    return
 
-            k = self.initial_candidates if self.enable_rerank else top_k
-            nodes = index.as_retriever(similarity_top_k=k).retrieve(query)
+                k = self.initial_candidates if self.enable_rerank else top_k
+                nodes = index.as_retriever(similarity_top_k=k).retrieve(query)
 
-            # 进行 LLM 重排
-            if self.enable_rerank and self.llm_reranker is not None and nodes:
-                nodes = self.llm_reranker.postprocess_nodes(nodes, query_str=query)
+                # 进行 LLM 重排
+                if self.enable_rerank and self.llm_reranker is not None and nodes:
+                    nodes = self.llm_reranker.postprocess_nodes(nodes, query_str=query)
 
-            # 截断（未开启重排时 nodes 已是 top_k；开启时 nodes 已是 rerank_top_n）
-            if not self.enable_rerank:
-                nodes = nodes[:top_k]
+                # 截断（未开启重排时 nodes 已是 top_k；开启时 nodes 已是 rerank_top_n）
+                if not self.enable_rerank:
+                    nodes = nodes[:top_k]
 
-            for n in nodes:
-                out[kind].append(
-                    {
-                        "score": float(getattr(n, "score", 0.0) or 0.0),
-                        "text": n.text or "",
-                        "metadata": n.metadata or {},
-                    }
-                )
+                for n in nodes:
+                    out[kind].append(
+                        {
+                            "score": float(getattr(n, "score", 0.0) or 0.0),
+                            "text": n.text or "",
+                            "metadata": n.metadata or {},
+                        }
+                    )
 
-        _do_search(self.file_index, "file")
-        _do_search(self.func_index, "function")
-        _do_search(self.class_index, "class")
-        return out
+            _do_search(self.file_index, "file")
+            _do_search(self.func_index, "function")
+            _do_search(self.class_index, "class")
+            return out
 
 
 class IndexingService:
     """
     高层封装：负责加载 `describe_output.json`、构建索引，并提供函数式的查询接口。
+    所有方法都是异步的，支持并发调用。
 
     用法示例：
     
-    service = RAGService(enable_rerank=True)
-    service.load_from_json("/abs/path/to/describe_output.json")
-    results = service.retrieve("如何调用XXX函数?", top_k=5)
+    service = IndexingService(enable_rerank=True)
+    await service.load_from_json("/abs/path/to/describe_output.json")
+    results = await service.retrieve("如何调用XXX函数?", top_k=5)
     """
 
     def __init__(
@@ -281,21 +320,21 @@ class IndexingService:
             persist_root_dir=persist_root_dir,
         )
 
-    def load_from_json(self, json_path: str) -> RAGBuildReport:
-        """加载 describe_output.json 并构建三个索引。"""
-        return self._indexing.build_from_json(json_path)
+    async def load_from_json(self, json_path: str) -> RAGBuildReport:
+        """异步加载 describe_output.json 并构建三个索引。"""
+        return await self._indexing.build_from_json(json_path)
 
-    def load_from_dict(self, data: Dict[str, Any]) -> RAGBuildReport:
-        """支持直接从内存字典构建。"""
-        return self._indexing.build_from_dict(data)
+    async def load_from_dict(self, data: Dict[str, Any]) -> RAGBuildReport:
+        """异步支持直接从内存字典构建。"""
+        return await self._indexing.build_from_dict(data)
 
-    def load_from_model(self, obj: Any) -> RAGBuildReport:
-        """支持直接传入 Pydantic/类似对象（如 DescribeOutput）。"""
-        return self._indexing.build_from_model(obj)
+    async def load_from_model(self, obj: Any) -> RAGBuildReport:
+        """异步支持直接传入 Pydantic/类似对象（如 DescribeOutput）。"""
+        return await self._indexing.build_from_model(obj)
 
-    def retrieve(self, query: str, top_k: int = 5) -> Dict[str, List[Dict[str, Any]]]:
-        """对已构建的索引执行查询，返回 file/function/class 三类结果。"""
-        return self._indexing.retrieve(query, top_k=top_k)
+    async def retrieve(self, query: str, top_k: int = 5) -> Dict[str, List[Dict[str, Any]]]:
+        """异步对已构建的索引执行查询，返回 file/function/class 三类结果。"""
+        return await self._indexing.retrieve(query, top_k=top_k)
 
     @staticmethod
     def pretty_print(results: Dict[str, Any]) -> None:

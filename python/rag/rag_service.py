@@ -26,15 +26,15 @@ class RagService:
             initial_candidates=initial_candidates,
         )
 
-    async def initiate(self, workspace_dir='/app/upload'):
+    async def initiate(self, workspace_dir):
         description_result = await self.description_generator.run(workspace_dir=workspace_dir)
         logger.info(f"description generation finish")
-        self.indexing_service.load_from_model(description_result)
+        await self.indexing_service.load_from_model(description_result)
         logger.info(f"indexing initialization finish")
         return True
 
     async def retrival(self, query):
         logger.info(f"retrival start")
-        results = self.indexing_service.retrieve(query, top_k=5)
+        results = await self.indexing_service.retrieve(query, top_k=5)
         logger.info(f"retrival finish")
         return results

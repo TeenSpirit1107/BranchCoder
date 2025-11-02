@@ -2,15 +2,15 @@
   "files": [
     {
       "file": "softmax_regression.py",
-      "description": "SoftmaxRegression module implementing a single-layer softmax classifier using a ReLU activation before softmax. The file defines SoftmaxRegression, a subclass of the project's base network interface (_baseNetwork), and manages weight initialization, forward passes, loss/accuracy computation, and gradient storage for training. It relies on numpy for numerical operations and uses several helper methods expected from the base class (e.g., ReLU, softmax, cross_entropy_loss, compute_accuracy, ReLU_dev). The forward method supports both training (computes and stores gradients) and evaluation (returns loss and accuracy without updating gradients). The network uses a weight matrix W1 without a bias term and updates gradients via a standard linear-backpropagation step preceded by a ReLU nonlinearity."
+      "description": "Softmax regression single-layer model implemented in Python using numpy. The module defines a SoftmaxRegression class that inherits from a base network to perform a simple softmax classification with a single linear layer (no bias) followed by a ReLU activation and a softmax output. It initializes weights and gradients, computes forward passes including loss and accuracy, and, during training, performs backpropagation to populate gradients for the weight matrix W1. The implementation relies on utilities from the base network (activation, softmax, loss, and accuracy helpers) and stores parameters and gradients in dictionaries. External dependencies are numpy and the local base class module _base_network."
     },
     {
       "file": "_base_network.py",
-      "description": "This file defines a foundational neural network base class _baseNetwork that provides common utilities for simple feedforward models. It imports numpy and uses two dictionaries, weights and gradients, to manage parameters during training. The class implements numerically stable softmax, cross-entropy loss, and accuracy calculations, along with basic activations (sigmoid and ReLU) and their derivatives. There are placeholder methods for weight initialization (_weight_init) and the forward pass (forward) intended to be overridden by subclasses. Overall, it supplies essential building blocks for NumPy-based neural networks and is designed to be extended by more specific model implementations."
+      "description": "The _base_network.py file defines a lightweight base class for neural networks using NumPy. It stores input_size and num_classes and maintains dictionaries for weights and gradients to be used by subclasses. It provides common utility implementations for activation (sigmoid, ReLU) and their derivatives, a numerically stable softmax, cross-entropy loss, and accuracy computation. The forward and weight initialization methods are left as placeholders to be implemented by concrete models. The module depends solely on NumPy and is designed to be extended by other network architectures within standard Python environments."
     },
     {
       "file": "two_layer_nn.py",
-      "description": "The file defines a simple two-layer neural network intended for multiclass classification, built on top of a common base network. It relies on the base class _baseNetwork for shared utilities such as activation functions, loss calculations, and metrics, and it maintains its parameters and gradients in dictionaries (self.weights and self.gradients). Weight initialization uses small random values for W1 and W2 with zero biases, and gradients are initialized to zeros. The forward method implements a full forward pass with a sigmoid hidden activation, a softmax output, cross-entropy loss, and accuracy computation, followed by a backpropagation step that fills self.gradients for W1, b1, W2, and b2. The implementation assumes inputs X of shape (N, input_size) and labels y of length N, and it interacts with the base network’s methods for activation, loss, and gradient calculations."
+      "description": "TwoLayerNet is a simple two-layer neural network implementation that extends a generic base network. It uses a hidden layer with a sigmoid activation and a softmax output layer to compute class probabilities, followed by cross-entropy loss and accuracy evaluation. The file handles parameter initialization, forward computation, and backpropagated gradients, storing parameters and gradients in dictionaries inherited from the base class. It depends on a common base class (_baseNetwork) for utility functions like activation, loss, and metrics, and it relies on numpy for numerical operations. The forward method currently performs both forward evaluation and gradient computation, with weight initialization designed for reproducible results via fixed seeds."
     }
   ],
   "functions": [
@@ -39,7 +39,7 @@
         "two_layer_nn.TwoLayerNet._weight_init",
         "two_layer_nn.TwoLayerNet.forward"
       ],
-      "description": "Initialize the SoftmaxRegression model with optional input_size and num_classes, delegate to the base class constructor, and perform weight initialization via _weight_init."
+      "description": "Constructor that sets default input/class sizes, initializes the base class, and prepares weights via _weight_init."
     },
     {
       "file": "softmax_regression.py",
@@ -66,7 +66,7 @@
         "two_layer_nn.TwoLayerNet._weight_init",
         "two_layer_nn.TwoLayerNet.forward"
       ],
-      "description": "Initialize the weight matrix W1 with small random values (seeded for reproducibility) and set the corresponding gradient placeholder to zeros; store in self.weights and self.gradients."
+      "description": "Initializes W1 with small random values (seeded for reproducibility) and allocates zeroed gradients for W1."
     },
     {
       "file": "softmax_regression.py",
@@ -86,7 +86,7 @@
         "two_layer_nn.TwoLayerNet._weight_init"
       ],
       "called_by": [],
-      "description": "Compute the forward pass to obtain class probabilities (X dot W1, then ReLU, then softmax), followed by cross-entropy loss and accuracy; in train mode, compute and store gradients for W1 using backpropagation through ReLU."
+      "description": "Performs the forward pass to compute loss and accuracy; in training mode, also computes and stores the gradient for W1 via backpropagation through ReLU."
     },
     {
       "file": "_base_network.py",
@@ -101,7 +101,7 @@
         "two_layer_nn.TwoLayerNet._weight_init",
         "two_layer_nn.TwoLayerNet.forward"
       ],
-      "description": "Initialize the base network with input_size (default 28*28) and num_classes (default 10); creates internal attributes input_size, num_classes, and empty dictionaries weights and gradients."
+      "description": "Initialize the base network with input_size and num_classes, and create empty dictionaries for weights and gradients."
     },
     {
       "file": "_base_network.py",
@@ -116,7 +116,7 @@
         "two_layer_nn.TwoLayerNet._weight_init",
         "two_layer_nn.TwoLayerNet.forward"
       ],
-      "description": "Placeholder for weight initialization; currently no implementation and intended to be overridden by subclasses."
+      "description": "Placeholder for weight initialization; currently no operation."
     },
     {
       "file": "_base_network.py",
@@ -124,7 +124,7 @@
       "source": "    def forward(self):\n        pass\n",
       "calls": [],
       "called_by": [],
-      "description": "Placeholder for the forward pass; no implementation in the base class and intended to be provided by subclasses."
+      "description": "Placeholder for forward pass; intended to be implemented by subclasses."
     },
     {
       "file": "_base_network.py",
@@ -139,7 +139,7 @@
         "two_layer_nn.TwoLayerNet._weight_init",
         "two_layer_nn.TwoLayerNet.forward"
       ],
-      "description": "Compute softmax probabilities from raw scores with a numerically stable shift trick; input scores have shape (N, num_classes); returns probabilities (N, num_classes)."
+      "description": "Compute numerically stable softmax probabilities for input scores of shape (N, num_classes); returns probabilities of the same shape."
     },
     {
       "file": "_base_network.py",
@@ -154,7 +154,7 @@
         "two_layer_nn.TwoLayerNet._weight_init",
         "two_layer_nn.TwoLayerNet.forward"
       ],
-      "description": "Compute mean cross-entropy loss from predicted probabilities x_pred and integer labels y; clips probabilities to avoid log(0) and returns a scalar loss."
+      "description": "Compute mean cross-entropy loss from predicted probabilities and true labels; clips probabilities to avoid log(0) and returns a scalar loss."
     },
     {
       "file": "_base_network.py",
@@ -169,7 +169,7 @@
         "two_layer_nn.TwoLayerNet._weight_init",
         "two_layer_nn.TwoLayerNet.forward"
       ],
-      "description": "Compute accuracy by comparing predicted class indices (argmax) to true labels y; returns scalar accuracy."
+      "description": "Compute accuracy by comparing predicted class with true labels and returning a scalar in [0, 1]."
     },
     {
       "file": "_base_network.py",
@@ -181,7 +181,7 @@
         "two_layer_nn.TwoLayerNet._weight_init",
         "two_layer_nn.TwoLayerNet.forward"
       ],
-      "description": "Apply the sigmoid activation to input X (shape N, D) and return the activated outputs."
+      "description": "Compute the sigmoid activation for input X and return the activated values with the same shape."
     },
     {
       "file": "_base_network.py",
@@ -193,7 +193,7 @@
         "two_layer_nn.TwoLayerNet._weight_init",
         "two_layer_nn.TwoLayerNet.forward"
       ],
-      "description": "Compute the derivative of the sigmoid function for input x and return ds."
+      "description": "Compute the derivative of the sigmoid function with respect to its input."
     },
     {
       "file": "_base_network.py",
@@ -205,7 +205,7 @@
         "softmax_regression.SoftmaxRegression._weight_init",
         "softmax_regression.SoftmaxRegression.forward"
       ],
-      "description": "Apply the ReLU activation to input X and return the activated outputs."
+      "description": "Apply the ReLU activation elementwise to input X and return the result."
     },
     {
       "file": "_base_network.py",
@@ -217,7 +217,7 @@
         "softmax_regression.SoftmaxRegression._weight_init",
         "softmax_regression.SoftmaxRegression.forward"
       ],
-      "description": "Compute the gradient of ReLU with respect to input X and return a mask of where X > 0."
+      "description": "Compute the gradient of ReLU given input X (1 for positive, 0 otherwise)."
     },
     {
       "file": "two_layer_nn.py",
@@ -244,7 +244,7 @@
         "two_layer_nn.TwoLayerNet._weight_init",
         "two_layer_nn.TwoLayerNet.forward"
       ],
-      "description": "Initialize the network by calling the base class constructor, set the hidden layer size, and perform initial weight setup via _weight_init; no return value."
+      "description": "Initialize the network by delegating to the base class, set hidden layer size, and initialize weights and gradients via _weight_init."
     },
     {
       "file": "two_layer_nn.py",
@@ -271,7 +271,7 @@
         "two_layer_nn.TwoLayerNet._weight_init",
         "two_layer_nn.TwoLayerNet.forward"
       ],
-      "description": "Initialize biases to zeros and weights to small random values for W1 and W2; reset gradients to zeros for all parameters; this prepares self.weights and self.gradients for training."
+      "description": "Initialize weights and biases (W1, b1, W2, b2) with small random values and zero gradients, using fixed seeds for reproducibility; shapes align with (input_size, hidden_size), (hidden_size,), (hidden_size, num_classes), and (num_classes,). This method populates self.weights and self.gradients and is called during construction."
     },
     {
       "file": "two_layer_nn.py",
@@ -291,7 +291,7 @@
         "two_layer_nn.TwoLayerNet._weight_init"
       ],
       "called_by": [],
-      "description": "Perform a full forward pass to compute loss and accuracy, then compute and store gradients via backpropagation in self.gradients; returns loss and accuracy; relies on base utilities for sigmoid, softmax, cross-entropy, and accuracy computations."
+      "description": "Perform a forward pass to compute the hidden activations (A1) with a sigmoid, the output scores (Z2) with a linear transform, and class probabilities via softmax; compute cross-entropy loss and accuracy; execute backpropagation to produce gradients for W2, b2, W1, and b1 and store them in self.gradients; return loss and accuracy. Note: the current implementation computes gradients regardless of the mode argument, and relies on base-class utilities for activation, loss, and metrics."
     }
   ],
   "classes": [
@@ -305,7 +305,7 @@
         "<module>.SoftmaxRegression._weight_init",
         "<module>.SoftmaxRegression.forward"
       ],
-      "description": "A single-layer softmax regression neural network extended from _baseNetwork; responsible for weight management (W1), forward computation of loss/accuracy, and gradient computation for training via backpropagation through a ReLU-activated linear layer before softmax."
+      "description": "A single-layer softmax regression model (no bias) that uses a linear layer outputs passed through ReLU and softmax. It manages weights and gradients, supports training/inference modes via forward, and relies on the base network for activation, loss, and accuracy utilities."
     },
     {
       "file": "/home/yf/Workspace/deep_learning/assignment1/models/_base_network.py",
@@ -324,7 +324,7 @@
         "<module>._baseNetwork.ReLU",
         "<module>._baseNetwork.ReLU_dev"
       ],
-      "description": "A foundational base class that stores configuration (input_size, num_classes) and parameter containers (weights, gradients), and provides common neural-network utilities (softmax, cross-entropy loss, accuracy, and simple activations with derivatives). It is designed to be subclassed to implement concrete architectures and forward/backward passes."
+      "description": "A minimal base class that stores configuration, holds placeholders for forward and weight initialization, and provides common neural-network utilities (softmax, cross-entropy loss, accuracy, sigmoid, and ReLU activations and derivatives) to be used or extended by concrete network implementations."
     },
     {
       "file": "/home/yf/Workspace/deep_learning/assignment1/models/two_layer_nn.py",
@@ -336,7 +336,7 @@
         "<module>.TwoLayerNet._weight_init",
         "<module>.TwoLayerNet.forward"
       ],
-      "description": "A simple feedforward neural network with one hidden layer (hidden_size), using sigmoid activation between layers and softmax cross-entropy loss for classification; it initializes parameters in _weight_init, and exposes a forward method that also computes and stores gradients for optimization via backpropagation; it inherits common behaviors (activations, loss, metrics) from the _baseNetwork base class."
+      "description": "A concrete two-layer neural network with one hidden layer that uses sigmoid non-linearity in the hidden layer and a softmax output with cross-entropy loss; it manages parameter storage in self.weights and gradient storage in self.gradients and delegates common computational utilities to the _baseNetwork base class."
     }
   ]
 }
