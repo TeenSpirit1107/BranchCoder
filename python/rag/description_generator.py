@@ -1,7 +1,7 @@
 import os
 import asyncio
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
 from pydantic import BaseModel
 import json
 from dotenv import load_dotenv
@@ -320,13 +320,17 @@ class DescriptionGenerator:
 
         return fd, described_items, described_classes
 
-    async def describe_workspace(self, workspace_dir) -> DescribeOutput:
+    async def describe_workspace(self, workspace_dir, output_path: Optional[str] = None) -> DescribeOutput:
         """核心入口（并发版本）：
         1) 按文件分组函数
         2) 并发读取文件源码，调用 LLM 生成文件/函数描述（使用信号量限制并发数）
         3) 把函数描述并回到切片数据
         4) 将每个文件级描述存盘（可选）
         5) 返回归并后的结果
+        
+        Args:
+            workspace_dir: Path to the workspace directory
+            output_path: Optional path to save description_output.json. If None, uses default path.
         """
         # Ensure workspace_dir is a Path to support path joining with '/'
         workspace_dir = Path(workspace_dir)
@@ -388,7 +392,12 @@ class DescriptionGenerator:
             classes=described_classes_acc,
         )
 
-        aggregate_file = Path(os.path.join("app","domain","services","rag","describe_output.json"))
+        # Determine output file path
+        if output_path:
+            aggregate_file = Path(output_path)
+        else:
+            # Default path for backward compatibility
+            aggregate_file = Path(os.path.join("app","domain","services","rag","description_output.json"))
 
         # 确保父目录存在
         aggregate_file.parent.mkdir(parents=True, exist_ok=True)
@@ -398,10 +407,12 @@ class DescriptionGenerator:
             json.dumps(final_result.model_dump(), ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
+        logger.info(f"Saved description_output.json to: {aggregate_file}")
 
         return final_result
 
-    async def run(self, workspace_dir):
+    async def run(self, workspace_dir, output_path: Optional[str] = None):
         return await self.describe_workspace(
             workspace_dir=workspace_dir,
+            output_path=output_path,
         )

@@ -3,11 +3,12 @@ from typing import Optional
 from llm.chat_llm import AsyncChatClientWrapper
 from rag.description_generator import DescriptionGenerator
 from rag.indexing import IndexingService
-from rag.workspace_hash import (
+from rag.hash import (
     compute_workspace_file_hashes,
     get_workspace_storage_path,
     save_workspace_metadata,
     check_indices_exist,
+    get_description_output_path,
 )
 from utils.logger import Logger
 
@@ -65,8 +66,14 @@ class RagService:
         # Initialize indexing service with workspace-specific path
         self._initialize_indexing_service(workspace_dir)
         
+        # Get path for description_output.json in workspace storage
+        description_output_path = get_description_output_path(workspace_dir)
+        
         # Generate descriptions and build indices
-        description_result = await self.description_generator.run(workspace_dir=workspace_dir)
+        description_result = await self.description_generator.run(
+            workspace_dir=workspace_dir,
+            output_path=description_output_path
+        )
         logger.info("Description generation finished")
         await self.indexing_service.load_from_model(description_result)
         logger.info("Indexing initialization finished")

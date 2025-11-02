@@ -291,13 +291,13 @@ class Indexing:
 
 class IndexingService:
     """
-    高层封装：负责加载 `describe_output.json`、构建索引，并提供函数式的查询接口。
+    高层封装：负责加载 `description_output.json`、构建索引，并提供函数式的查询接口。
     所有方法都是异步的，支持并发调用。
 
     用法示例：
     
     service = IndexingService(enable_rerank=True)
-    await service.load_from_json("/abs/path/to/describe_output.json")
+    await service.load_from_json("/abs/path/to/description_output.json")
     results = await service.retrieve("如何调用XXX函数?", top_k=5)
     """
 
@@ -321,7 +321,7 @@ class IndexingService:
         )
 
     async def load_from_json(self, json_path: str) -> RAGBuildReport:
-        """异步加载 describe_output.json 并构建三个索引。"""
+        """异步加载 description_output.json 并构建三个索引。"""
         return await self._indexing.build_from_json(json_path)
 
     async def load_from_dict(self, data: Dict[str, Any]) -> RAGBuildReport:

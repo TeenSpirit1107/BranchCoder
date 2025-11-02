@@ -130,6 +130,20 @@ def get_workspace_metadata_path(workspace_dir: str) -> str:
     return str(Path(storage_path) / "workspace_metadata.json")
 
 
+def get_description_output_path(workspace_dir: str) -> str:
+    """
+    Get path to description_output.json file for the workspace.
+    
+    Args:
+        workspace_dir: Path to the workspace directory
+        
+    Returns:
+        Absolute path to description_output.json file
+    """
+    storage_path = get_workspace_storage_path(workspace_dir)
+    return str(Path(storage_path) / "description_output.json")
+
+
 def load_workspace_metadata(workspace_dir: str) -> Optional[dict]:
     """
     Load workspace metadata (hash, workspace_dir, etc.).
@@ -237,43 +251,6 @@ def get_changed_files(workspace_dir: str) -> dict:
         "deleted": deleted,
         "unchanged": unchanged,
     }
-
-
-def check_workspace_hash_match(workspace_dir: str) -> bool:
-    """
-    Check if current workspace hash matches saved hash.
-    
-    Args:
-        workspace_dir: Path to the workspace directory
-        
-    Returns:
-        True if hash matches and metadata exists, False otherwise
-    """
-    # Compute current hash
-    current_hash = compute_workspace_hash(workspace_dir)
-    if not current_hash:
-        return False
-    
-    # Load saved metadata
-    metadata = load_workspace_metadata(workspace_dir)
-    if not metadata:
-        return False
-    
-    # Check workspace directory matches
-    saved_workspace_dir = metadata.get("workspace_dir", "")
-    current_workspace_dir = str(Path(workspace_dir).absolute())
-    if saved_workspace_dir != current_workspace_dir:
-        logger.info("Workspace directory changed")
-        return False
-    
-    # Check hash matches
-    saved_hash = metadata.get("file_hash", "")
-    if saved_hash != current_hash:
-        logger.info("Workspace files changed (hash mismatch)")
-        return False
-    
-    logger.info("Workspace hash matches saved hash")
-    return True
 
 
 def check_indices_exist(workspace_dir: str) -> bool:
