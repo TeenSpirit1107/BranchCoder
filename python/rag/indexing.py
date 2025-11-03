@@ -25,9 +25,13 @@ from llm.rag_llm import (
     DEFAULT_EMBED_MODEL,
     DEFAULT_LLM_MODEL_FOR_RERANK,
 )
+from utils.logger import Logger
 
 # Concurrency limit for async indexing operations (from .env file, default: 2)
 DEFAULT_BUILD_CONCURRENCY = int(os.getenv("RAG_BUILD_CONCURRENCY", "2"))
+
+# Initialize logger for indexing module
+logger = Logger('indexing', log_to_file=False)
 
 
 @dataclass
@@ -288,6 +292,150 @@ class Indexing:
             _do_search(self.class_index, "class")
             return out
 
+    async def update_indices_incremental(
+        self,
+        updated_output: Any,
+        files_to_remove: List[str],
+        new_file_descs: List[Any],
+        new_functions: List[Any],
+        new_classes: List[Any],
+    ) -> None:
+        """
+        Incrementally update indices by adding new documents and removing old ones.
+        This avoids rebuilding the entire index - only adds new embeddings and removes old ones.
+        
+        Args:
+            updated_output: Updated DescribeOutput with all data
+            files_to_remove: List of file paths to remove from indices
+            new_file_descs: New file descriptions to add
+            new_functions: New functions to add
+            new_classes: New classes to add
+        """
+        async with self._build_lock:
+            # Convert new items to Documents
+            new_file_docs, _, _ = self._docs_from_items(
+                [fd.model_dump() for fd in new_file_descs], "file"
+            )
+            new_func_docs, _, _ = self._docs_from_items(
+                [f.model_dump() for f in new_functions], "function"
+            )
+            new_class_docs, _, _ = self._docs_from_items(
+                [c.model_dump() for c in new_classes], "class"
+            )
+            
+            # Remove old documents from indices (by file path in metadata)
+            if files_to_remove:
+                for file_path in files_to_remove:
+                    # Remove from file index
+                    if self.file_index:
+                        try:
+                            # Find and delete refs with matching file metadata
+                            ref_doc_ids = []
+                            for doc_id in self.file_index.ref_doc_info.keys():
+                                try:
+                                    doc = self.file_index.docstore.get_document(doc_id)
+                                    if doc and doc.metadata.get("file") == file_path:
+                                        ref_doc_ids.append(doc_id)
+                                except Exception:
+                                    # Document might not exist, skip
+                                    continue
+                            
+                            for doc_id in ref_doc_ids:
+                                try:
+                                    self.file_index.delete_ref_doc(doc_id, delete_from_docstore=True)
+                                except Exception as delete_error:
+                                    # Document might already be deleted, log but don't fail
+                                    logger.debug(f"Could not delete doc_id {doc_id} from file index: {delete_error}")
+                        except Exception as e:
+                            logger.warning(f"Error removing file {file_path} from file index: {e}")
+                    
+                    # Remove from function index
+                    if self.func_index:
+                        try:
+                            ref_doc_ids = []
+                            for doc_id in self.func_index.ref_doc_info.keys():
+                                try:
+                                    doc = self.func_index.docstore.get_document(doc_id)
+                                    if doc and doc.metadata.get("file") == file_path:
+                                        ref_doc_ids.append(doc_id)
+                                except Exception:
+                                    # Document might not exist, skip
+                                    continue
+                            
+                            for doc_id in ref_doc_ids:
+                                try:
+                                    self.func_index.delete_ref_doc(doc_id, delete_from_docstore=True)
+                                except Exception as delete_error:
+                                    # Document might already be deleted, log but don't fail
+                                    logger.debug(f"Could not delete doc_id {doc_id} from function index: {delete_error}")
+                        except Exception as e:
+                            logger.warning(f"Error removing file {file_path} from function index: {e}")
+                    
+                    # Remove from class index
+                    if self.class_index:
+                        try:
+                            ref_doc_ids = []
+                            for doc_id in self.class_index.ref_doc_info.keys():
+                                try:
+                                    doc = self.class_index.docstore.get_document(doc_id)
+                                    if doc and doc.metadata.get("file") == file_path:
+                                        ref_doc_ids.append(doc_id)
+                                except Exception:
+                                    # Document might not exist, skip
+                                    continue
+                            
+                            for doc_id in ref_doc_ids:
+                                try:
+                                    self.class_index.delete_ref_doc(doc_id, delete_from_docstore=True)
+                                except Exception as delete_error:
+                                    # Document might already be deleted, log but don't fail
+                                    logger.debug(f"Could not delete doc_id {doc_id} from class index: {delete_error}")
+                        except Exception as e:
+                            logger.warning(f"Error removing file {file_path} from class index: {e}")
+            
+            # Add new documents to indices (only new ones need embedding)
+            async def _insert_docs(index: Optional[VectorStoreIndex], docs: List[Document], kind: str):
+                if index is None or not docs:
+                    return
+                try:
+                    # Validate docs are Document objects
+                    for i, doc in enumerate(docs):
+                        if not isinstance(doc, Document):
+                            logger.error(f"Invalid document at index {i} for {kind}: expected Document, got {type(doc)}")
+                            return
+                    
+                    # Insert documents one by one
+                    # LlamaIndex's insert() method expects single Document or needs to be called per document
+                    async with self._build_semaphore:
+                        loop = asyncio.get_event_loop()
+                        # Insert documents one by one to avoid list wrapping issues
+                        def insert_single_doc(doc: Document):
+                            index.insert(doc)
+                        
+                        for doc in docs:
+                            await loop.run_in_executor(
+                                None,
+                                insert_single_doc,
+                                doc  # Pass doc as argument to avoid closure issues
+                            )
+                    logger.info(f"Inserted {len(docs)} new {kind} documents")
+                except Exception as e:
+                    logger.error(f"Error inserting {kind} documents: {e}", exc_info=True)
+            
+            # Insert new documents concurrently
+            await asyncio.gather(
+                _insert_docs(self.file_index, new_file_docs, "file"),
+                _insert_docs(self.func_index, new_func_docs, "function"),
+                _insert_docs(self.class_index, new_class_docs, "class"),
+            )
+            
+            # Persist updated indices
+            self._persist_index(self.file_index, "file")
+            self._persist_index(self.func_index, "function")
+            self._persist_index(self.class_index, "class")
+            
+            logger.info("Incremental index update completed")
+
 
 class IndexingService:
     """
@@ -335,6 +483,33 @@ class IndexingService:
     async def retrieve(self, query: str, top_k: int = 5) -> Dict[str, List[Dict[str, Any]]]:
         """异步对已构建的索引执行查询，返回 file/function/class 三类结果。"""
         return await self._indexing.retrieve(query, top_k=top_k)
+
+    async def update_indices_incremental(
+        self,
+        updated_output: Any,
+        files_to_remove: List[str],
+        new_file_descs: List[Any],
+        new_functions: List[Any],
+        new_classes: List[Any],
+    ) -> None:
+        """
+        Incrementally update indices by adding new documents and removing old ones.
+        Only processes changed files, avoiding full index rebuild.
+        
+        Args:
+            updated_output: Updated DescribeOutput with all data
+            files_to_remove: List of file paths to remove from indices
+            new_file_descs: New file descriptions to add
+            new_functions: New functions to add
+            new_classes: New classes to add
+        """
+        await self._indexing.update_indices_incremental(
+            updated_output=updated_output,
+            files_to_remove=files_to_remove,
+            new_file_descs=new_file_descs,
+            new_functions=new_functions,
+            new_classes=new_classes,
+        )
 
     @staticmethod
     def pretty_print(results: Dict[str, Any]) -> None:

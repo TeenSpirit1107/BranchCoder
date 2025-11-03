@@ -208,20 +208,28 @@ def get_changed_files(workspace_dir: str) -> dict:
         - "deleted": list of file paths that no longer exist
         - "unchanged": list of file paths that haven't changed
     """
+    logger.info(f"[Hash检查] 开始检查工作区文件变化: {workspace_dir}")
+    
     # Load saved metadata
     metadata = load_workspace_metadata(workspace_dir)
     if not metadata:
         # No saved metadata, all files are considered new
+        logger.info("[Hash检查] 未找到保存的元数据，所有文件视为新增")
         current_hashes = compute_workspace_file_hashes(workspace_dir)
-        return {
+        result = {
             "changed": [],
             "added": list(current_hashes.keys()),
             "deleted": [],
             "unchanged": [],
         }
+        logger.info(f"[Hash检查] 结果 - 新增: {len(result['added'])} 个文件")
+        return result
     
     saved_hashes = metadata.get("file_hashes", {})
+    logger.info(f"[Hash检查] 已保存的hash记录: {len(saved_hashes)} 个文件")
+    
     current_hashes = compute_workspace_file_hashes(workspace_dir)
+    logger.info(f"[Hash检查] 当前文件hash计算完成: {len(current_hashes)} 个文件")
     
     changed = []
     added = []
@@ -233,17 +241,33 @@ def get_changed_files(workspace_dir: str) -> dict:
         if file_path in saved_hashes:
             if current_hashes[file_path] != saved_hashes[file_path]:
                 changed.append(file_path)
+                logger.debug(f"[Hash检查] 文件变化: {file_path} (旧hash: {saved_hashes[file_path][:8]}..., 新hash: {current_hashes[file_path][:8]}...)")
             else:
                 unchanged.append(file_path)
         else:
             added.append(file_path)
+            logger.debug(f"[Hash检查] 新增文件: {file_path}")
     
     # Check for deleted files
     for file_path in saved_hashes:
         if file_path not in current_hashes:
             deleted.append(file_path)
+            logger.debug(f"[Hash检查] 删除文件: {file_path}")
     
-    logger.info(f"File changes detected - Changed: {len(changed)}, Added: {len(added)}, Deleted: {len(deleted)}, Unchanged: {len(unchanged)}")
+    logger.info(
+        f"[Hash检查] 文件变化检测完成 - "
+        f"变化: {len(changed)}, "
+        f"新增: {len(added)}, "
+        f"删除: {len(deleted)}, "
+        f"未变化: {len(unchanged)}"
+    )
+    
+    if changed:
+        logger.info(f"[Hash检查] 变化的文件列表: {changed}")
+    if added:
+        logger.info(f"[Hash检查] 新增的文件列表: {added}")
+    if deleted:
+        logger.info(f"[Hash检查] 删除的文件列表: {deleted}")
     
     return {
         "changed": changed,

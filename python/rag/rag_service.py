@@ -10,6 +10,7 @@ from rag.hash import (
     check_indices_exist,
     get_description_output_path,
 )
+from rag.incremental_updater import update_changed_files_incremental
 from utils.logger import Logger
 
 # Initialize logger instance
@@ -110,3 +111,41 @@ class RagService:
         results = await self.indexing_service.retrieve(query, top_k=5)
         logger.info(f"retrival finish")
         return results
+
+    async def update_changed_files(
+        self, 
+        workspace_dir: str,
+        changed_files: list[str],
+        deleted_files: list[str],
+    ) -> dict:
+        """
+        Incrementally update RAG indices for specified files.
+        This method processes only the modified files without rebuilding the entire index.
+        
+        Args:
+            workspace_dir: Path to the workspace directory
+            changed_files: List of relative file paths that have been changed or added
+            deleted_files: List of relative file paths that have been deleted
+            
+        Returns:
+            Dictionary with update statistics:
+            {
+                "changed_files": list of changed file paths,
+                "added_files": list of newly added file paths,
+                "deleted_files": list of deleted file paths,
+                "updated": True/False
+            }
+        """
+        # Ensure indexing service is initialized
+        if self.indexing_service is None:
+            logger.info("Indexing service not initialized, initializing now")
+            self._initialize_indexing_service(workspace_dir)
+        
+        # Delegate to incremental_updater module
+        return await update_changed_files_incremental(
+            description_generator=self.description_generator,
+            indexing_service=self.indexing_service,
+            workspace_dir=workspace_dir,
+            changed_files=changed_files,
+            deleted_files=deleted_files,
+        )

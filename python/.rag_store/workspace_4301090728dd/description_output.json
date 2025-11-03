@@ -35,6 +35,10 @@
     {
       "file": "flows/plan_act.py",
       "description": "PlanActFlow orchestrates a plan-then-act loop by coordinating planner, executor, and notifier sub-agents to transform user input into a concrete plan and iteratively execute and update it. It defines a small FSM of statuses (idle, planning, executing, updating, reporting, completed) to drive the flow, and relies on a variety of domain events (PlanCreatedEvent, PlanUpdatedEvent, ToolCallingEvent, etc.) to communicate progress. The module imports extensive domain models, memory, and external services (LLMs, Sandbox, Browser, SearchEngine) and uses a specialized plan-act logger alongside the standard logger for structured logging. It constructs PlannerAgent, ExecutionAgent, and NotifyAgent instances bound to the provided agent memories and external resources, enabling end-to-end orchestration from plan creation to final reporting. It also provides a helper for inspecting plans and a simple idle check to drive restarts, and it yields events to consumers as the flow progresses."
+    },
+    {
+      "file": "__init__.py",
+      "description": "This __init__.py file serves as the package initializer and public API aggregator. It re-exports SoftmaxRegression and TwoLayerNet from internal modules, so consumers can import them directly from the package root. It relies on relative imports from softmax_regression and two_layer_nn, without adding new logic. By exposing these classes at the package level, it hides internal module structure and simplifies usage. It minimizes coupling by serving as a single point of entry for common models, aiding discoverability and import ergonomics."
     }
   ],
   "functions": [
