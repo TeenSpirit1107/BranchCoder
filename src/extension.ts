@@ -3,12 +3,13 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { spawn } from 'child_process';
 import { ChatPanel } from './ChatPanel';
+import { createSnapshot, loadSnapshot, saveSnapshot, compareSnapshots, Snapshot } from './snapshot';
 
 let chatPanel: ChatPanel | undefined;
 let ragInitializationInProgress = false;
 let ragUpdateInProgress = false;
-let fileWatcher: vscode.FileSystemWatcher | undefined;
-let fileChangeDebounceTimer: NodeJS.Timeout | undefined;
+let snapshotCheckTimer: NodeJS.Timeout | undefined;
+let lastUpdateTime: number = 0;
 const pendingChangedFiles = new Set<string>();
 const pendingDeletedFiles = new Set<string>();
 
@@ -43,6 +44,31 @@ function shouldWatchFile(filePath: string, workspaceDir: string): boolean {
 
 function getRelativePath(filePath: string, workspaceDir: string): string {
     return path.relative(workspaceDir, filePath).replace(/\\/g, '/');
+}
+
+/**
+ * Read update interval from .env file (in seconds, default: 60)
+ */
+function getUpdateIntervalSeconds(workspaceDir: string): number {
+    const envPath = path.join(workspaceDir, '.env');
+    if (!fs.existsSync(envPath)) {
+        return 60; // Default: 60 seconds
+    }
+
+    try {
+        const envContent = fs.readFileSync(envPath, 'utf-8');
+        const lines = envContent.split('\n');
+        for (const line of lines) {
+            const match = line.match(/^\s*RAG_UPDATE_INTERVAL_SECONDS\s*=\s*(\d+)\s*$/);
+            if (match) {
+                return parseInt(match[1], 10);
+            }
+        }
+    } catch (error) {
+        console.error('Failed to read .env file:', error);
+    }
+
+    return 60; // Default: 60 seconds
 }
 
 // Initialize RAG service for the current workspace
@@ -241,7 +267,7 @@ async function updateRAG(workspaceDir: string, extensionPath: string, outputChan
             outputChannel.append(logMessage);
         });
 
-        pythonProcess.on('close', (code: number | null) => {
+        pythonProcess.on('close', async (code: number | null) => {
             ragUpdateInProgress = false;
             
             if (code === 0) {
@@ -250,6 +276,9 @@ async function updateRAG(workspaceDir: string, extensionPath: string, outputChan
                     if (response.status === 'success') {
                         console.log('RAG update completed successfully');
                         outputChannel.appendLine(`[RAG Update] ✅ Success: ${response.message}`);
+                        // Clear pending files after successful update
+                        pendingChangedFiles.clear();
+                        pendingDeletedFiles.clear();
                         resolve();
                     } else {
                         const errorMsg = response.message || 'RAG update failed';
@@ -292,93 +321,103 @@ async function updateRAG(workspaceDir: string, extensionPath: string, outputChan
     });
 }
 
-// Setup file watcher for a workspace
-function setupFileWatcher(workspaceDir: string, extensionPath: string, outputChannel: vscode.OutputChannel): void {
-    // Dispose existing watcher if any
-    if (fileWatcher) {
-        fileWatcher.dispose();
+/**
+ * Setup snapshot-based file change detection for a workspace
+ */
+function setupSnapshotChecker(workspaceDir: string, extensionPath: string, outputChannel: vscode.OutputChannel): void {
+    // Clear existing timer if any
+    if (snapshotCheckTimer) {
+        clearInterval(snapshotCheckTimer);
     }
 
-    // Create pattern to watch all code files in workspace
-    const workspaceFolder = vscode.workspace.getWorkspaceFolder(vscode.Uri.file(workspaceDir));
-    if (!workspaceFolder) {
-        console.log('No workspace folder found for file watching');
-        return;
-    }
+    console.log(`Setting up snapshot checker for workspace: ${workspaceDir}`);
 
-    // Create file system watcher
-    const pattern = new vscode.RelativePattern(workspaceFolder, '**/*');
-    fileWatcher = vscode.workspace.createFileSystemWatcher(pattern);
+    // Initial snapshot creation after initialization
+    let oldSnapshot: Snapshot | null = null;
 
-    // Handle file changes
-    fileWatcher.onDidChange(async (uri: vscode.Uri) => {
-        const filePath = uri.fsPath;
-        if (shouldWatchFile(filePath, workspaceDir)) {
-            const relativePath = getRelativePath(filePath, workspaceDir);
-            console.log(`File changed: ${relativePath}`);
-            pendingChangedFiles.add(relativePath);
-            
-            // Clear existing timer and set new one (debounce)
-            if (fileChangeDebounceTimer) {
-                clearTimeout(fileChangeDebounceTimer);
+    const checkSnapshotAndUpdate = async () => {
+        try {
+            const updateIntervalSeconds = getUpdateIntervalSeconds(workspaceDir);
+            const currentTime = Date.now();
+            const timeSinceLastUpdate = lastUpdateTime > 0 ? (currentTime - lastUpdateTime) / 1000 : updateIntervalSeconds;
+
+            // Check if update interval has passed
+            if (timeSinceLastUpdate >= updateIntervalSeconds) {
+                // Time to check: create new snapshot and compare
+                outputChannel.appendLine(`[Snapshot] Creating snapshot and checking for changes...`);
+                const newSnapshot = await createSnapshot(workspaceDir);
+
+                // Load old snapshot if exists
+                if (!oldSnapshot) {
+                    oldSnapshot = await loadSnapshot(workspaceDir, extensionPath);
+                }
+
+                if (oldSnapshot) {
+                    // Compare snapshots
+                    const changes = compareSnapshots(oldSnapshot, newSnapshot);
+                    const totalChanges = changes.added.length + changes.changed.length + changes.deleted.length;
+
+                    if (totalChanges > 0) {
+                        outputChannel.appendLine(
+                            `[Snapshot] Detected changes: ${changes.added.length} added, ` +
+                            `${changes.changed.length} changed, ${changes.deleted.length} deleted`
+                        );
+
+                        // Merge added and changed into changed_files
+                        const allChanged = [...changes.added, ...changes.changed];
+
+                        // Add to pending sets
+                        allChanged.forEach(file => pendingChangedFiles.add(file));
+                        changes.deleted.forEach(file => pendingDeletedFiles.add(file));
+
+                        // Trigger RAG update
+                        outputChannel.appendLine(`[Snapshot] Update interval reached, triggering RAG update...`);
+                        lastUpdateTime = currentTime;
+                        
+                        try {
+                            await updateRAG(workspaceDir, extensionPath, outputChannel);
+                            
+                            // Save new snapshot after successful update
+                            await saveSnapshot(newSnapshot, workspaceDir, extensionPath);
+                            oldSnapshot = newSnapshot;
+                            outputChannel.appendLine(`[Snapshot] ✅ Snapshot updated after successful RAG update`);
+                        } catch (error: any) {
+                            outputChannel.appendLine(`[Snapshot] ⚠️ Update failed, keeping old snapshot: ${error.message}`);
+                            // Keep old snapshot on error
+                        }
+                    } else {
+                        outputChannel.appendLine(`[Snapshot] No changes detected, updating snapshot timestamp`);
+                        // No changes, update snapshot timestamp but keep file hashes
+                        await saveSnapshot(newSnapshot, workspaceDir, extensionPath);
+                        oldSnapshot = newSnapshot;
+                        lastUpdateTime = currentTime;
+                    }
+                } else {
+                    // First snapshot, just save it
+                    outputChannel.appendLine(`[Snapshot] First snapshot, saving...`);
+                    await saveSnapshot(newSnapshot, workspaceDir, extensionPath);
+                    oldSnapshot = newSnapshot;
+                    lastUpdateTime = currentTime;
+                }
             }
-            
-            // Wait 1 second before triggering update (debounce)
-            fileChangeDebounceTimer = setTimeout(() => {
-                updateRAG(workspaceDir, extensionPath, outputChannel).catch((error: any) => {
-                    console.error('Failed to update RAG:', error);
-                });
-            }, 1000);
+            // If interval hasn't passed yet, do nothing (wait for next check)
+        } catch (error: any) {
+            console.error('Snapshot check failed:', error);
+            outputChannel.appendLine(`[Snapshot] ❌ Error: ${error.message}`);
         }
-    });
+    };
 
-    // Handle file creation
-    fileWatcher.onDidCreate(async (uri: vscode.Uri) => {
-        const filePath = uri.fsPath;
-        if (shouldWatchFile(filePath, workspaceDir)) {
-            const relativePath = getRelativePath(filePath, workspaceDir);
-            console.log(`File created: ${relativePath}`);
-            pendingChangedFiles.add(relativePath);
-            
-            // Clear existing timer and set new one (debounce)
-            if (fileChangeDebounceTimer) {
-                clearTimeout(fileChangeDebounceTimer);
-            }
-            
-            // Wait 1 second before triggering update (debounce)
-            fileChangeDebounceTimer = setTimeout(() => {
-                updateRAG(workspaceDir, extensionPath, outputChannel).catch((error: any) => {
-                    console.error('Failed to update RAG:', error);
-                });
-            }, 1000);
-        }
-    });
+    // Check snapshot at the configured interval
+    const updateIntervalSeconds = getUpdateIntervalSeconds(workspaceDir);
+    const intervalMs = updateIntervalSeconds * 1000;
+    
+    outputChannel.appendLine(`[Snapshot] Snapshot checker will run every ${updateIntervalSeconds} seconds`);
+    
+    // Start checking at the configured interval
+    snapshotCheckTimer = setInterval(checkSnapshotAndUpdate, intervalMs);
 
-    // Handle file deletion
-    fileWatcher.onDidDelete(async (uri: vscode.Uri) => {
-        const filePath = uri.fsPath;
-        if (shouldWatchFile(filePath, workspaceDir)) {
-            const relativePath = getRelativePath(filePath, workspaceDir);
-            console.log(`File deleted: ${relativePath}`);
-            pendingDeletedFiles.add(relativePath);
-            // Also remove from changed files if it was there
-            pendingChangedFiles.delete(relativePath);
-            
-            // Clear existing timer and set new one (debounce)
-            if (fileChangeDebounceTimer) {
-                clearTimeout(fileChangeDebounceTimer);
-            }
-            
-            // Wait 1 second before triggering update (debounce)
-            fileChangeDebounceTimer = setTimeout(() => {
-                updateRAG(workspaceDir, extensionPath, outputChannel).catch((error: any) => {
-                    console.error('Failed to update RAG:', error);
-                });
-            }, 1000);
-        }
-    });
-
-    console.log(`File watcher set up for workspace: ${workspaceDir}`);
+    // Also check immediately after a short delay (for initial setup)
+    setTimeout(checkSnapshotAndUpdate, 2000);
 }
 
 // Check for file changes that occurred while VSCode was closed
@@ -502,26 +541,58 @@ export function activate(context: vscode.ExtensionContext) {
             try {
                 await initializeRAG(workspaceDir, context.extensionPath, outputChannel);
                 
-                // Check for file changes that occurred while VSCode was closed
-                const changes = await checkForChangesWhileClosed(workspaceDir, context.extensionPath, outputChannel);
-                if (changes && (changes.changedFiles.length > 0 || changes.deletedFiles.length > 0)) {
-                    // Update RAG for files that were changed while VSCode was closed
-                    outputChannel.appendLine(`[RAG Check] Updating RAG for files changed while VSCode was closed...`);
-                    try {
-                        // Manually set the files since updateRAG expects them in pending sets
-                        changes.changedFiles.forEach(file => pendingChangedFiles.add(file));
-                        changes.deletedFiles.forEach(file => pendingDeletedFiles.add(file));
-                        // Trigger update
-                        await updateRAG(workspaceDir, context.extensionPath, outputChannel);
-                        outputChannel.appendLine(`[RAG Check] ✅ Successfully updated RAG for files changed while VSCode was closed`);
-                    } catch (error: any) {
-                        console.error('Failed to update RAG for changes while closed:', error);
-                        outputChannel.appendLine(`[RAG Check] ⚠️ Warning: Failed to update RAG for some files changed while VSCode was closed`);
-                    }
-                }
+                // Check for changes while VSCode was closed by comparing snapshots
+                outputChannel.appendLine(`[Snapshot] Checking for file changes while VSCode was closed...`);
+                try {
+                            const oldSnapshot = await loadSnapshot(workspaceDir, context.extensionPath);
+                            if (oldSnapshot) {
+                                const newSnapshot = await createSnapshot(workspaceDir);
+                                const changes = compareSnapshots(oldSnapshot, newSnapshot);
+                                const totalChanges = changes.added.length + changes.changed.length + changes.deleted.length;
+                                
+                                if (totalChanges > 0) {
+                                    outputChannel.appendLine(
+                                        `[Snapshot] Found changes while closed: ${changes.added.length} added, ` +
+                                        `${changes.changed.length} changed, ${changes.deleted.length} deleted`
+                                    );
+                                    // Add to pending sets and trigger update
+                                    const allChanged = [...changes.added, ...changes.changed];
+                                    allChanged.forEach(file => pendingChangedFiles.add(file));
+                                    changes.deleted.forEach(file => pendingDeletedFiles.add(file));
+                                    
+                                    // Trigger update immediately for changes while closed
+                                    await updateRAG(workspaceDir, context.extensionPath, outputChannel);
+                                    lastUpdateTime = Date.now();
+                                    
+                                    // Save updated snapshot
+                                    await saveSnapshot(newSnapshot, workspaceDir, context.extensionPath);
+                                    outputChannel.appendLine(`[Snapshot] ✅ Updated RAG and snapshot for changes while closed`);
+                                } else {
+                                    outputChannel.appendLine(`[Snapshot] No changes detected while closed`);
+                                    // Update snapshot timestamp even if no changes
+                                    await saveSnapshot(newSnapshot, workspaceDir, context.extensionPath);
+                                }
+                            } else {
+                                // No old snapshot, create initial snapshot
+                                outputChannel.appendLine(`[Snapshot] Creating initial snapshot after RAG initialization...`);
+                                const initialSnapshot = await createSnapshot(workspaceDir);
+                                await saveSnapshot(initialSnapshot, workspaceDir, context.extensionPath);
+                                outputChannel.appendLine(`[Snapshot] ✅ Initial snapshot saved`);
+                            }
+                        } catch (error: any) {
+                            outputChannel.appendLine(`[Snapshot] ⚠️ Warning: Failed to check/create snapshot: ${error.message}`);
+                            // Still try to create initial snapshot if check failed
+                            try {
+                                const initialSnapshot = await createSnapshot(workspaceDir);
+                                await saveSnapshot(initialSnapshot, workspaceDir, context.extensionPath);
+                                outputChannel.appendLine(`[Snapshot] ✅ Created initial snapshot as fallback`);
+                            } catch (e: any) {
+                                outputChannel.appendLine(`[Snapshot] ❌ Failed to create snapshot: ${e.message}`);
+                            }
+                        }
                 
-                // Setup file watcher after successful initialization
-                setupFileWatcher(workspaceDir, context.extensionPath, outputChannel);
+                // Setup snapshot checker after successful initialization
+                setupSnapshotChecker(workspaceDir, context.extensionPath, outputChannel);
             } catch (error: any) {
                 console.error('Failed to initialize RAG:', error);
                 // Don't show error to user as this might be expected in some cases
@@ -546,26 +617,58 @@ export function activate(context: vscode.ExtensionContext) {
                     try {
                         await initializeRAG(workspaceDir, context.extensionPath, outputChannel);
                         
-                        // Check for file changes that occurred while VSCode was closed
-                        const changes = await checkForChangesWhileClosed(workspaceDir, context.extensionPath, outputChannel);
-                        if (changes && (changes.changedFiles.length > 0 || changes.deletedFiles.length > 0)) {
-                            // Update RAG for files that were changed while VSCode was closed
-                            outputChannel.appendLine(`[RAG Check] Updating RAG for files changed while VSCode was closed...`);
+                        // Check for changes while VSCode was closed by comparing snapshots
+                        outputChannel.appendLine(`[Snapshot] Checking for file changes while VSCode was closed...`);
+                        try {
+                            const oldSnapshot = await loadSnapshot(workspaceDir, context.extensionPath);
+                            if (oldSnapshot) {
+                                const newSnapshot = await createSnapshot(workspaceDir);
+                                const changes = compareSnapshots(oldSnapshot, newSnapshot);
+                                const totalChanges = changes.added.length + changes.changed.length + changes.deleted.length;
+                                
+                                if (totalChanges > 0) {
+                                    outputChannel.appendLine(
+                                        `[Snapshot] Found changes while closed: ${changes.added.length} added, ` +
+                                        `${changes.changed.length} changed, ${changes.deleted.length} deleted`
+                                    );
+                                    // Add to pending sets and trigger update
+                                    const allChanged = [...changes.added, ...changes.changed];
+                                    allChanged.forEach(file => pendingChangedFiles.add(file));
+                                    changes.deleted.forEach(file => pendingDeletedFiles.add(file));
+                                    
+                                    // Trigger update immediately for changes while closed
+                                    await updateRAG(workspaceDir, context.extensionPath, outputChannel);
+                                    lastUpdateTime = Date.now();
+                                    
+                                    // Save updated snapshot
+                                    await saveSnapshot(newSnapshot, workspaceDir, context.extensionPath);
+                                    outputChannel.appendLine(`[Snapshot] ✅ Updated RAG and snapshot for changes while closed`);
+                                } else {
+                                    outputChannel.appendLine(`[Snapshot] No changes detected while closed`);
+                                    // Update snapshot timestamp even if no changes
+                                    await saveSnapshot(newSnapshot, workspaceDir, context.extensionPath);
+                                }
+                            } else {
+                                // No old snapshot, create initial snapshot
+                                outputChannel.appendLine(`[Snapshot] Creating initial snapshot after RAG initialization...`);
+                                const initialSnapshot = await createSnapshot(workspaceDir);
+                                await saveSnapshot(initialSnapshot, workspaceDir, context.extensionPath);
+                                outputChannel.appendLine(`[Snapshot] ✅ Initial snapshot saved`);
+                            }
+                        } catch (error: any) {
+                            outputChannel.appendLine(`[Snapshot] ⚠️ Warning: Failed to check/create snapshot: ${error.message}`);
+                            // Still try to create initial snapshot if check failed
                             try {
-                                // Manually set the files since updateRAG expects them in pending sets
-                                changes.changedFiles.forEach(file => pendingChangedFiles.add(file));
-                                changes.deletedFiles.forEach(file => pendingDeletedFiles.add(file));
-                                // Trigger update
-                                await updateRAG(workspaceDir, context.extensionPath, outputChannel);
-                                outputChannel.appendLine(`[RAG Check] ✅ Successfully updated RAG for files changed while VSCode was closed`);
-                            } catch (error: any) {
-                                console.error('Failed to update RAG for changes while closed:', error);
-                                outputChannel.appendLine(`[RAG Check] ⚠️ Warning: Failed to update RAG for some files changed while VSCode was closed`);
+                                const initialSnapshot = await createSnapshot(workspaceDir);
+                                await saveSnapshot(initialSnapshot, workspaceDir, context.extensionPath);
+                                outputChannel.appendLine(`[Snapshot] ✅ Created initial snapshot as fallback`);
+                            } catch (e: any) {
+                                outputChannel.appendLine(`[Snapshot] ❌ Failed to create snapshot: ${e.message}`);
                             }
                         }
                         
-                        // Setup file watcher after successful initialization
-                        setupFileWatcher(workspaceDir, context.extensionPath, outputChannel);
+                        // Setup snapshot checker after successful initialization
+                        setupSnapshotChecker(workspaceDir, context.extensionPath, outputChannel);
                     } catch (error: any) {
                         console.error(`Failed to initialize RAG for ${workspaceDir}:`, error);
                     }
@@ -574,14 +677,11 @@ export function activate(context: vscode.ExtensionContext) {
         })
     );
 
-    // Dispose file watcher when extension deactivates
+    // Dispose snapshot checker when extension deactivates
     context.subscriptions.push({
         dispose: () => {
-            if (fileWatcher) {
-                fileWatcher.dispose();
-            }
-            if (fileChangeDebounceTimer) {
-                clearTimeout(fileChangeDebounceTimer);
+            if (snapshotCheckTimer) {
+                clearInterval(snapshotCheckTimer);
             }
         }
     });

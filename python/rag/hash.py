@@ -5,6 +5,7 @@ Handles computation and storage of workspace file hashes for RAG indexing cache.
 
 import hashlib
 import json
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -166,7 +167,7 @@ def load_workspace_metadata(workspace_dir: str) -> Optional[dict]:
     return None
 
 
-def save_workspace_metadata(workspace_dir: str, file_hashes: dict) -> bool:
+def save_workspace_metadata(workspace_dir: str, file_hashes: dict, last_update_time: Optional[float] = None) -> bool:
     """
     Save workspace metadata to disk, including file-to-hash mappings.
     
@@ -174,15 +175,26 @@ def save_workspace_metadata(workspace_dir: str, file_hashes: dict) -> bool:
         workspace_dir: Path to the workspace directory
         file_hashes: Dictionary mapping relative file paths to their hashes
                     Format: {"relative/path/file.py": "hash1", ...}
+        last_update_time: Optional timestamp of last update (if None, preserves existing or uses current time)
         
     Returns:
         True if saved successfully, False otherwise
     """
     metadata_path = get_workspace_metadata_path(workspace_dir)
     try:
+        # If last_update_time not provided, try to preserve existing one
+        if last_update_time is None:
+            existing_metadata = load_workspace_metadata(workspace_dir)
+            if existing_metadata and "last_update_time" in existing_metadata:
+                last_update_time = existing_metadata.get("last_update_time")
+            else:
+                # No existing metadata or no last_update_time, use current time
+                last_update_time = time.time()
+        
         metadata = {
             "workspace_dir": str(Path(workspace_dir).absolute()),
             "file_hashes": file_hashes,
+            "last_update_time": last_update_time,
         }
         Path(metadata_path).parent.mkdir(parents=True, exist_ok=True)
         with open(metadata_path, 'w', encoding='utf-8') as f:
@@ -275,6 +287,268 @@ def get_changed_files(workspace_dir: str) -> dict:
         "deleted": deleted,
         "unchanged": unchanged,
     }
+
+
+def get_last_update_time(workspace_dir: str) -> Optional[float]:
+    """
+    Get the last update time for the workspace.
+    
+    Args:
+        workspace_dir: Path to the workspace directory
+        
+    Returns:
+        Timestamp of last update, or None if not found
+    """
+    metadata = load_workspace_metadata(workspace_dir)
+    if metadata:
+        return metadata.get("last_update_time")
+    return None
+
+
+def save_last_update_time(workspace_dir: str, update_time: Optional[float] = None) -> bool:
+    """
+    Save the last update time for the workspace.
+    Preserves existing metadata, only updates the last_update_time field.
+    
+    Args:
+        workspace_dir: Path to the workspace directory
+        update_time: Timestamp to save (if None, current time is used)
+        
+    Returns:
+        True if saved successfully, False otherwise
+    """
+    if update_time is None:
+        update_time = time.time()
+    
+    # Load existing metadata to preserve file_hashes
+    existing_metadata = load_workspace_metadata(workspace_dir)
+    if existing_metadata:
+        file_hashes = existing_metadata.get("file_hashes", {})
+    else:
+        file_hashes = {}
+    
+    return save_workspace_metadata(workspace_dir, file_hashes, update_time)
+
+
+def verify_and_filter_changes(
+    workspace_dir: str,
+    changed_files: list[str],
+    deleted_files: list[str],
+) -> dict:
+    """
+    Verify and filter file changes based on actual file hashes.
+    Removes files from changed_files if:
+    - File doesn't exist (should be in deleted_files instead)
+    - File hash matches saved hash (no actual change)
+    - File was deleted and restored with same hash
+    
+    Removes files from deleted_files if:
+    - File still exists (should be in changed_files instead if hash changed)
+    
+    Args:
+        workspace_dir: Path to the workspace directory
+        changed_files: List of file paths reported as changed
+        deleted_files: List of file paths reported as deleted
+        
+    Returns:
+        Dictionary with verified and filtered changes:
+        {
+            "changed_files": list of files that actually need updating,
+            "deleted_files": list of files that are actually deleted
+        }
+    """
+    workspace_path = Path(workspace_dir)
+    metadata = load_workspace_metadata(workspace_dir)
+    saved_hashes = metadata.get("file_hashes", {}) if metadata else {}
+    
+    verified_changed = []
+    verified_deleted = []
+    
+    # Check changed files
+    for file_path_str in changed_files:
+        file_path = workspace_path / file_path_str
+        
+        # If file doesn't exist, it's deleted, not changed
+        if not file_path.exists() or not file_path.is_file():
+            logger.debug(f"File {file_path_str} in changed_files doesn't exist, skipping from changed")
+            # Don't add to deleted here - it will be checked in deleted_files section
+            continue
+        
+        # Compute current hash
+        current_hash = compute_file_hash(file_path)
+        if not current_hash:
+            logger.warning(f"Could not compute hash for {file_path_str}, skipping")
+            continue
+        
+        # Check if file has saved hash
+        if file_path_str in saved_hashes:
+            saved_hash = saved_hashes[file_path_str]
+            # If hash is the same, file wasn't actually changed
+            if current_hash == saved_hash:
+                logger.debug(f"File {file_path_str} hash unchanged, skipping update")
+                continue
+        
+        # File actually changed or is new
+        verified_changed.append(file_path_str)
+    
+    # Check deleted files
+    for file_path_str in deleted_files:
+        file_path = workspace_path / file_path_str
+        
+        # If file doesn't exist, it's actually deleted
+        if not file_path.exists() or not file_path.is_file():
+            verified_deleted.append(file_path_str)
+            continue
+        
+        # File exists - check if it was restored with same content
+        current_hash = compute_file_hash(file_path)
+        if not current_hash:
+            # Can't compute hash, assume it needs updating (should be in changed)
+            logger.warning(f"Could not compute hash for {file_path_str}, treating as changed instead of deleted")
+            if file_path_str not in verified_changed:
+                verified_changed.append(file_path_str)
+            continue
+        
+        # Check if hash matches saved hash
+        if file_path_str in saved_hashes:
+            saved_hash = saved_hashes[file_path_str]
+            if current_hash == saved_hash:
+                # File was deleted and restored with same content, no update needed
+                logger.debug(f"File {file_path_str} was deleted but restored with same hash, skipping")
+                continue
+            else:
+                # File was deleted but restored with different content, needs updating
+                logger.debug(f"File {file_path_str} was deleted but restored with different content, treating as changed")
+                if file_path_str not in verified_changed:
+                    verified_changed.append(file_path_str)
+        else:
+            # File was deleted but now exists (new file), treat as changed
+            logger.debug(f"File {file_path_str} was deleted but now exists (new), treating as changed")
+            if file_path_str not in verified_changed:
+                verified_changed.append(file_path_str)
+    
+    return {
+        "changed_files": verified_changed,
+        "deleted_files": verified_deleted,
+    }
+
+
+def get_pending_changes(workspace_dir: str) -> dict:
+    """
+    Get pending changes (files waiting to be updated) from metadata.
+    
+    Args:
+        workspace_dir: Path to the workspace directory
+        
+    Returns:
+        Dictionary with keys:
+        - "changed_files": list of pending changed file paths
+        - "deleted_files": list of pending deleted file paths
+    """
+    metadata = load_workspace_metadata(workspace_dir)
+    if metadata:
+        return {
+            "changed_files": metadata.get("pending_changed_files", []),
+            "deleted_files": metadata.get("pending_deleted_files", []),
+        }
+    return {"changed_files": [], "deleted_files": []}
+
+
+def save_pending_changes(
+    workspace_dir: str,
+    changed_files: list[str],
+    deleted_files: list[str],
+) -> bool:
+    """
+    Save pending changes to metadata.
+    Merges with existing pending changes to avoid duplicates.
+    
+    Args:
+        workspace_dir: Path to the workspace directory
+        changed_files: List of changed file paths to add
+        deleted_files: List of deleted file paths to add
+        
+    Returns:
+        True if saved successfully, False otherwise
+    """
+    # Load existing metadata
+    existing_metadata = load_workspace_metadata(workspace_dir)
+    
+    # Get existing pending changes
+    existing_pending = get_pending_changes(workspace_dir)
+    existing_changed = set(existing_pending["changed_files"])
+    existing_deleted = set(existing_pending["deleted_files"])
+    
+    # Merge new changes (use set to avoid duplicates)
+    merged_changed = list(existing_changed | set(changed_files))
+    merged_deleted = list(existing_deleted | set(deleted_files))
+    
+    # If a file was deleted, remove it from changed list
+    merged_changed = [f for f in merged_changed if f not in merged_deleted]
+    
+    # Prepare metadata
+    if existing_metadata:
+        file_hashes = existing_metadata.get("file_hashes", {})
+        last_update_time = existing_metadata.get("last_update_time")
+    else:
+        file_hashes = {}
+        last_update_time = None
+    
+    metadata = {
+        "workspace_dir": str(Path(workspace_dir).absolute()),
+        "file_hashes": file_hashes,
+        "last_update_time": last_update_time,
+        "pending_changed_files": merged_changed,
+        "pending_deleted_files": merged_deleted,
+    }
+    
+    metadata_path = get_workspace_metadata_path(workspace_dir)
+    try:
+        Path(metadata_path).parent.mkdir(parents=True, exist_ok=True)
+        with open(metadata_path, 'w', encoding='utf-8') as f:
+            json.dump(metadata, f, indent=2, ensure_ascii=False)
+        logger.info(f"Saved pending changes: {len(merged_changed)} changed, {len(merged_deleted)} deleted")
+        return True
+    except Exception as e:
+        logger.error(f"Error saving pending changes: {e}")
+        return False
+
+
+def clear_pending_changes(workspace_dir: str) -> bool:
+    """
+    Clear pending changes from metadata.
+    
+    Args:
+        workspace_dir: Path to the workspace directory
+        
+    Returns:
+        True if cleared successfully, False otherwise
+    """
+    existing_metadata = load_workspace_metadata(workspace_dir)
+    if not existing_metadata:
+        return True  # Nothing to clear
+    
+    file_hashes = existing_metadata.get("file_hashes", {})
+    last_update_time = existing_metadata.get("last_update_time")
+    
+    metadata = {
+        "workspace_dir": str(Path(workspace_dir).absolute()),
+        "file_hashes": file_hashes,
+        "last_update_time": last_update_time,
+        "pending_changed_files": [],
+        "pending_deleted_files": [],
+    }
+    
+    metadata_path = get_workspace_metadata_path(workspace_dir)
+    try:
+        Path(metadata_path).parent.mkdir(parents=True, exist_ok=True)
+        with open(metadata_path, 'w', encoding='utf-8') as f:
+            json.dump(metadata, f, indent=2, ensure_ascii=False)
+        logger.info("Cleared pending changes")
+        return True
+    except Exception as e:
+        logger.error(f"Error clearing pending changes: {e}")
+        return False
 
 
 def check_indices_exist(workspace_dir: str) -> bool:
