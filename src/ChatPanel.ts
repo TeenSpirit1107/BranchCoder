@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 import { spawn } from 'child_process';
+import { marked } from 'marked';
 
 export class ChatPanel {
     private chatHistory: Array<{ role: string; content: string }> = [];
@@ -193,6 +194,15 @@ export class ChatPanel {
 
         const nonce = this.getNonce();
 
+        // Configure marked options for better security and rendering
+        marked.setOptions({
+            breaks: true,
+            gfm: true,
+        });
+
+        // Get marked library script content
+        const markedScript = this.getMarkedScript(webview);
+
         return `<!DOCTYPE html>
             <html lang="en">
             <head>
@@ -207,7 +217,7 @@ export class ChatPanel {
                     <div class="chat-messages" id="chatMessages">
                         ${this.chatHistory.map(msg => `
                             <div class="message ${msg.role}">
-                                <div class="message-content">${this.escapeHtml(msg.content)}</div>
+                                <div class="message-content">${this.renderMarkdown(msg.content)}</div>
                             </div>
                         `).join('')}
                     </div>
@@ -221,12 +231,37 @@ export class ChatPanel {
                     </div>
                 </div>
                 <script nonce="${nonce}">
+                    ${markedScript}
+                    
                     const vscode = acquireVsCodeApi();
                     const chatHistory = ${JSON.stringify(this.chatHistory)};
                     
                     const chatMessages = document.getElementById('chatMessages');
                     const messageInput = document.getElementById('messageInput');
                     const sendButton = document.getElementById('sendButton');
+                    
+                    // Markdown renderer function
+                    function renderMarkdown(text) {
+                        if (!text || typeof text !== 'string') {
+                            return '';
+                        }
+                        try {
+                            if (typeof marked !== 'undefined') {
+                                return marked.parse(text);
+                            } else {
+                                // Fallback: simple markdown-like rendering
+                                const backtick = String.fromCharCode(96);
+                                return text
+                                    .replace(/\\*\\*([^*]+)\\*\\*/g, '<strong>$1</strong>')
+                                    .replace(/\\*([^*]+)\\*/g, '<em>$1</em>')
+                                    .replace(new RegExp(backtick + '([^' + backtick + ']+)' + backtick, 'g'), '<code>$1</code>')
+                                    .replace(/\\n/g, '<br>');
+                            }
+                        } catch (e) {
+                            console.error('Markdown rendering error:', e);
+                            return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\\n/g, '<br>');
+                        }
+                    }
                     
                     function scrollToBottom() {
                         chatMessages.scrollTop = chatMessages.scrollHeight;
@@ -258,7 +293,10 @@ export class ChatPanel {
                             case 'addMessage':
                                 const messageDiv = document.createElement('div');
                                 messageDiv.className = \`message \${message.role}\`;
-                                messageDiv.innerHTML = \`<div class="message-content">\${message.isLoading ? '<em>Thinking...</em>' : message.content}</div>\`;
+                                const content = message.isLoading 
+                                    ? '<em>Thinking...</em>' 
+                                    : renderMarkdown(message.content || '');
+                                messageDiv.innerHTML = \`<div class="message-content">\${content}</div>\`;
                                 chatMessages.appendChild(messageDiv);
                                 scrollToBottom();
                                 break;
@@ -278,6 +316,26 @@ export class ChatPanel {
             </html>`;
     }
 
+    private renderMarkdown(text: string): string {
+        if (!text) {
+            return '';
+        }
+        try {
+            // Configure marked for rendering
+            marked.setOptions({
+                breaks: true,
+                gfm: true,
+            });
+            const result = marked.parse(text);
+            // marked.parse can return string or Promise<string>
+            // For our use case, we expect synchronous rendering
+            return typeof result === 'string' ? result : String(result);
+        } catch (error) {
+            // Fallback to HTML escaping if markdown parsing fails
+            return this.escapeHtml(text);
+        }
+    }
+
     private escapeHtml(text: string): string {
         const map: { [key: string]: string } = {
             '&': '&amp;',
@@ -287,6 +345,167 @@ export class ChatPanel {
             "'": '&#039;'
         };
         return text.replace(/[&<>"']/g, (m) => map[m]).replace(/\n/g, '<br>');
+    }
+
+    private getMarkedScript(webview: vscode.Webview): string {
+        // Try to read marked from node_modules (different possible locations)
+        const possiblePaths = [
+            path.join(this.extensionPath || '', 'node_modules', 'marked', 'lib', 'marked.esm.js'),
+            path.join(this.extensionPath || '', 'node_modules', 'marked', 'lib', 'marked.umd.js'),
+            path.join(this.extensionPath || '', 'node_modules', 'marked', 'marked.min.js'),
+            path.join(this.extensionPath || '', 'node_modules', 'marked', 'marked.js'),
+        ];
+        
+        for (const markedPath of possiblePaths) {
+            try {
+                if (fs.existsSync(markedPath)) {
+                    const markedContent = fs.readFileSync(markedPath, 'utf-8');
+                    // Wrap UMD/ESM code to work in webview context
+                    if (markedPath.includes('.umd.js')) {
+                        return markedContent;
+                    } else if (markedPath.includes('.esm.js')) {
+                        // For ESM, we need to create a simple wrapper
+                        // Actually, let's use a simpler inline markdown parser for webviews
+                        return this.getInlineMarkdownParser();
+                    } else {
+                        return markedContent;
+                    }
+                }
+            } catch (error) {
+                // Continue to next path
+            }
+        }
+        
+        // Fallback: use inline markdown parser
+        return this.getInlineMarkdownParser();
+    }
+
+    private getInlineMarkdownParser(): string {
+        // Simple but effective markdown parser for common cases
+        // Use string concatenation to avoid template literal escaping issues
+        return [
+            '// Simple Markdown parser',
+            '(function() {',
+            '    const Marked = {};',
+            '    ',
+            '    Marked.parse = function(text) {',
+            '        if (!text) return "";',
+            '        ',
+            '        let html = text;',
+            '        ',
+            '        // Store code blocks temporarily to avoid escaping them',
+            '        const codeBlocks = [];',
+            '        const inlineCodes = [];',
+            '        const backtick = String.fromCharCode(96);',
+            '        const backtick3 = backtick + backtick + backtick;',
+            '        html = html.replace(new RegExp(backtick3 + \'([\\\\s\\\\S]*?)\' + backtick3, \'g\'), function(match, code) {',
+            "            const placeholder = '___CODE_BLOCK_' + codeBlocks.length + '___';",
+            "            codeBlocks.push('<pre><code>' + escapeHtml(code.trim()) + '</code></pre>');",
+            '            return placeholder;',
+            '        });',
+            '        ',
+            '        // Store inline code temporarily',
+            '        html = html.replace(new RegExp(backtick + \'([^\' + backtick + \'\\\\n]+)\' + backtick, \'g\'), function(match, code) {',
+            "            const placeholder = '___INLINE_CODE_' + inlineCodes.length + '___';",
+            "            inlineCodes.push('<code>' + escapeHtml(code) + '</code>');",
+            '            return placeholder;',
+            '        });',
+            '        ',
+            '        // Now escape HTML to prevent XSS',
+            '        html = escapeHtml(html);',
+            '        ',
+            '        // Restore code blocks and inline code',
+            '        codeBlocks.forEach(function(block, index) {',
+            "            html = html.replace('___CODE_BLOCK_' + index + '___', block);",
+            '        });',
+            '        inlineCodes.forEach(function(code, index) {',
+            "            html = html.replace('___INLINE_CODE_' + index + '___', code);",
+            '        });',
+            '        ',
+            '        // Headers (process before other formatting)',
+            "        html = html.replace(/^### (.*)$/gm, '<h3>$1</h3>');",
+            "        html = html.replace(/^## (.*)$/gm, '<h2>$1</h2>');",
+            "        html = html.replace(/^# (.*)$/gm, '<h1>$1</h1>');",
+            '        ',
+            '        // Horizontal rules',
+            "        html = html.replace(/^---$/gm, '<hr>');",
+            "        html = html.replace(/^\\*\\*\\*$/gm, '<hr>');",
+            '        ',
+            '        // Lists (unordered) - process line by line',
+            '        const lines = html.split(\'\\n\');',
+            '        const result = [];',
+            '        let inList = false;',
+            '        ',
+            '        for (let i = 0; i < lines.length; i++) {',
+            '            const line = lines[i];',
+            "            const listMatch = line.match(/^(\\*|-)\\s+(.+)$/);",
+            '            ',
+            '            if (listMatch) {',
+            "                if (!inList) {",
+            "                    result.push('<ul>');",
+            '                    inList = true;',
+            '                }',
+            "                result.push('<li>' + listMatch[2] + '</li>');",
+            '            } else {',
+            '                if (inList) {',
+            "                    result.push('</ul>');",
+            '                    inList = false;',
+            '                }',
+            '                result.push(line);',
+            '            }',
+            '        }',
+            '        ',
+            '        if (inList) {',
+            "            result.push('</ul>');",
+            '        }',
+            '        ',
+            '        html = result.join(\'\\n\');',
+            '        ',
+            '        // Bold (avoid conflicts with code)',
+            "        html = html.replace(/\\*\\*([^*]+)\\*\\*/g, '<strong>$1</strong>');",
+            "        html = html.replace(/__([^_]+)__/g, '<strong>$1</strong>');",
+            '        ',
+            '        // Italic (avoid conflicts with bold)',
+            "        html = html.replace(/\\*([^*]+)\\*/g, '<em>$1</em>');",
+            "        html = html.replace(/_([^_]+)_/g, '<em>$1</em>');",
+            '        ',
+            '        // Links [text](url)',
+            "        html = html.replace(/\\[([^\\]]+)\\]\\(([^\\)]+)\\)/g, '<a href=\"$2\" target=\"_blank\" rel=\"noopener noreferrer\">$1</a>');",
+            '        ',
+            '        // Paragraphs and line breaks',
+            "        html = html.replace(/\\n\\n+/g, '</p><p>');",
+            "        html = '<p>' + html + '</p>';",
+            "        html = html.replace(/\\n/g, '<br>');",
+            '        ',
+            '        // Clean up empty paragraphs and fix block elements',
+            "        html = html.replace(/<p><\\/p>/g, '');",
+            "        html = html.replace(/<p>(<[^>]+>)<\\/p>/g, '$1');",
+            "        html = html.replace(/<p>(<h[1-6]>)/g, '$1');",
+            "        html = html.replace(/(<\\/h[1-6]>)<\\/p>/g, '$1');",
+            "        html = html.replace(/<p>(<pre>)/g, '$1');",
+            "        html = html.replace(/(<\\/pre>)<\\/p>/g, '$1');",
+            "        html = html.replace(/<p>(<ul>)/g, '$1');",
+            "        html = html.replace(/(<\\/ul>)<\\/p>/g, '$1');",
+            "        html = html.replace(/<p>(<hr>)/g, '$1');",
+            "        html = html.replace(/(<hr>)<\\/p>/g, '$1');",
+            '        ',
+            '        return html;',
+            '    };',
+            '    ',
+            '    function escapeHtml(text) {',
+            '        const map = {',
+            "            '&': '&amp;',",
+            "            '<': '&lt;',",
+            "            '>': '&gt;',",
+            '            \'"\': \'&quot;\',',
+            "            \"'\": '&#039;'",
+            '        };',
+            "        return text.replace(/[&<>\"']/g, function(m) { return map[m]; });",
+            '    }',
+            '    ',
+            '    window.marked = Marked;',
+            '})();'
+        ].join('\n');
     }
 
     private getNonce() {

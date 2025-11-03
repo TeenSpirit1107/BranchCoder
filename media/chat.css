@@ -53,6 +53,128 @@ body {
     font-style: italic;
 }
 
+/* Markdown styles */
+.message-content h1,
+.message-content h2,
+.message-content h3 {
+    margin-top: 0.5em;
+    margin-bottom: 0.5em;
+    font-weight: bold;
+}
+
+.message-content h1 {
+    font-size: 1.5em;
+    border-bottom: 1px solid var(--vscode-panel-border);
+    padding-bottom: 0.3em;
+}
+
+.message-content h2 {
+    font-size: 1.3em;
+    border-bottom: 1px solid var(--vscode-panel-border);
+    padding-bottom: 0.3em;
+}
+
+.message-content h3 {
+    font-size: 1.1em;
+}
+
+.message-content p {
+    margin: 0.5em 0;
+}
+
+.message-content p:first-child {
+    margin-top: 0;
+}
+
+.message-content p:last-child {
+    margin-bottom: 0;
+}
+
+.message-content code {
+    background-color: var(--vscode-textCodeBlock-background);
+    color: var(--vscode-textLink-foreground);
+    padding: 0.2em 0.4em;
+    border-radius: 3px;
+    font-family: var(--vscode-editor-font-family);
+    font-size: 0.9em;
+}
+
+.message-content pre {
+    background-color: var(--vscode-textCodeBlock-background);
+    border: 1px solid var(--vscode-panel-border);
+    border-radius: 4px;
+    padding: 0.8em;
+    margin: 0.8em 0;
+    overflow-x: auto;
+    line-height: 1.4;
+}
+
+.message-content pre code {
+    background-color: transparent;
+    color: inherit;
+    padding: 0;
+    border-radius: 0;
+    font-size: 0.85em;
+}
+
+.message-content ul,
+.message-content ol {
+    margin: 0.5em 0;
+    padding-left: 1.5em;
+}
+
+.message-content li {
+    margin: 0.3em 0;
+}
+
+.message-content a {
+    color: var(--vscode-textLink-foreground);
+    text-decoration: none;
+}
+
+.message-content a:hover {
+    text-decoration: underline;
+}
+
+.message-content hr {
+    border: none;
+    border-top: 1px solid var(--vscode-panel-border);
+    margin: 1em 0;
+}
+
+.message-content blockquote {
+    border-left: 3px solid var(--vscode-panel-border);
+    padding-left: 1em;
+    margin: 0.8em 0;
+    color: var(--vscode-descriptionForeground);
+    font-style: italic;
+}
+
+.message-content table {
+    border-collapse: collapse;
+    margin: 0.8em 0;
+    width: 100%;
+}
+
+.message-content table th,
+.message-content table td {
+    border: 1px solid var(--vscode-panel-border);
+    padding: 0.5em;
+    text-align: left;
+}
+
+.message-content table th {
+    background-color: var(--vscode-editor-lineHighlightBackground);
+    font-weight: bold;
+}
+
+/* Fix code block whitespace */
+.message-content pre {
+    white-space: pre;
+    word-wrap: normal;
+    overflow-wrap: normal;
+}
+
 .chat-input-container {
     display: flex;
     gap: 8px;
