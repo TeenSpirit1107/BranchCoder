@@ -1,10 +1,10 @@
 from typing import Optional
+import time
 
 from llm.chat_llm import AsyncChatClientWrapper
 from rag.description_generator import DescriptionGenerator
 from rag.indexing import IndexingService
 from rag.hash import (
-    compute_workspace_file_hashes,
     get_workspace_storage_path,
     save_workspace_metadata,
     check_indices_exist,
@@ -79,9 +79,9 @@ class RagService:
         await self.indexing_service.load_from_model(description_result)
         logger.info("Indexing initialization finished")
         
-        # Compute and save file hashes after successful indexing (for future use)
-        file_hashes = compute_workspace_file_hashes(workspace_dir)
-        save_workspace_metadata(workspace_dir, file_hashes)
+        # Note: File hashes are now stored in snapshot.json (managed by VSCode extension)
+        # Only save last_update_time to metadata
+        save_workspace_metadata(workspace_dir, last_update_time=time.time())
         
         return True
 

@@ -47,10 +47,10 @@ function getRelativePath(filePath: string, workspaceDir: string): string {
 }
 
 /**
- * Read update interval from .env file (in seconds, default: 60)
+ * Read update interval from .env file in python folder (in seconds, default: 60)
  */
-function getUpdateIntervalSeconds(workspaceDir: string): number {
-    const envPath = path.join(workspaceDir, '.env');
+function getUpdateIntervalSeconds(extensionPath: string): number {
+    const envPath = path.join(extensionPath, 'python', '.env');
     if (!fs.existsSync(envPath)) {
         return 60; // Default: 60 seconds
     }
@@ -337,7 +337,7 @@ function setupSnapshotChecker(workspaceDir: string, extensionPath: string, outpu
 
     const checkSnapshotAndUpdate = async () => {
         try {
-            const updateIntervalSeconds = getUpdateIntervalSeconds(workspaceDir);
+            const updateIntervalSeconds = getUpdateIntervalSeconds(extensionPath);
             const currentTime = Date.now();
             const timeSinceLastUpdate = lastUpdateTime > 0 ? (currentTime - lastUpdateTime) / 1000 : updateIntervalSeconds;
 
@@ -408,7 +408,7 @@ function setupSnapshotChecker(workspaceDir: string, extensionPath: string, outpu
     };
 
     // Check snapshot at the configured interval
-    const updateIntervalSeconds = getUpdateIntervalSeconds(workspaceDir);
+    const updateIntervalSeconds = getUpdateIntervalSeconds(extensionPath);
     const intervalMs = updateIntervalSeconds * 1000;
     
     outputChannel.appendLine(`[Snapshot] Snapshot checker will run every ${updateIntervalSeconds} seconds`);
