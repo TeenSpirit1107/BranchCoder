@@ -381,6 +381,107 @@ function setupFileWatcher(workspaceDir: string, extensionPath: string, outputCha
     console.log(`File watcher set up for workspace: ${workspaceDir}`);
 }
 
+// Check for file changes that occurred while VSCode was closed
+async function checkForChangesWhileClosed(
+    workspaceDir: string,
+    extensionPath: string,
+    outputChannel: vscode.OutputChannel
+): Promise<{ changedFiles: string[], deletedFiles: string[] } | null> {
+    return new Promise((resolve) => {
+        // Get Python path from configuration
+        const config = vscode.workspace.getConfiguration('aiChat');
+        let pythonPath = config.get<string>('pythonPath', '.venv/bin/python');
+        
+        // Resolve relative Python path relative to extension path
+        let resolvedPythonPath = pythonPath;
+        if (!path.isAbsolute(pythonPath)) {
+            resolvedPythonPath = path.join(extensionPath, pythonPath);
+        }
+        
+        // RAG check changes script path
+        const ragCheckScriptPath = path.join(extensionPath, 'python', 'rag_check_changes_service.py');
+        
+        if (!fs.existsSync(ragCheckScriptPath)) {
+            console.log('RAG check changes script not found, skipping check');
+            resolve(null);
+            return;
+        }
+
+        console.log(`Checking for file changes while VSCode was closed...`);
+        outputChannel.appendLine(`[RAG Check] Checking for file changes...`);
+
+        // Spawn Python process
+        const pythonProcess = spawn(resolvedPythonPath, [ragCheckScriptPath], {
+            stdio: ['pipe', 'pipe', 'pipe'],
+            cwd: extensionPath
+        });
+
+        let output = '';
+        let errorOutput = '';
+
+        // Send workspace directory to Python process
+        const inputData = JSON.stringify({ workspace_dir: workspaceDir });
+        pythonProcess.stdin.write(inputData);
+        pythonProcess.stdin.end();
+
+        // Collect output
+        pythonProcess.stdout.on('data', (data: Buffer) => {
+            output += data.toString();
+        });
+
+        // Collect stderr logs
+        pythonProcess.stderr.on('data', (data: Buffer) => {
+            errorOutput += data.toString();
+            outputChannel.append(data.toString());
+        });
+
+        pythonProcess.on('close', (code: number | null) => {
+            if (code === 0) {
+                try {
+                    const response = JSON.parse(output.trim());
+                    if (response.status === 'success' && response.has_changes) {
+                        const changedFiles = response.changed_files || [];
+                        const addedFiles = response.added_files || [];
+                        const deletedFiles = response.deleted_files || [];
+                        
+                        console.log(`Found changes: ${changedFiles.length + addedFiles.length} changed/added, ${deletedFiles.length} deleted`);
+                        outputChannel.appendLine(`[RAG Check] Found ${changedFiles.length + addedFiles.length} changed/added files and ${deletedFiles.length} deleted files`);
+                        
+                        // Combine changed and added files
+                        const allChangedFiles = [...changedFiles, ...addedFiles];
+                        resolve({
+                            changedFiles: allChangedFiles,
+                            deletedFiles: deletedFiles
+                        });
+                    } else {
+                        console.log('No file changes detected');
+                        outputChannel.appendLine(`[RAG Check] No file changes detected`);
+                        resolve(null);
+                    }
+                } catch (e) {
+                    console.error(`Failed to parse check changes response: ${e}`);
+                    resolve(null);
+                }
+            } else {
+                console.error(`Check changes failed with code ${code}`);
+                resolve(null);
+            }
+        });
+
+        pythonProcess.on('error', (error: Error) => {
+            console.error(`Failed to start check changes process: ${error.message}`);
+            resolve(null);
+        });
+
+        // Timeout after 30 seconds
+        setTimeout(() => {
+            pythonProcess.kill();
+            console.error('Check changes timed out');
+            resolve(null);
+        }, 30000);
+    });
+}
+
 export function activate(context: vscode.ExtensionContext) {
     console.log('AI Chat Extension is activating...');
     
@@ -400,6 +501,25 @@ export function activate(context: vscode.ExtensionContext) {
             
             try {
                 await initializeRAG(workspaceDir, context.extensionPath, outputChannel);
+                
+                // Check for file changes that occurred while VSCode was closed
+                const changes = await checkForChangesWhileClosed(workspaceDir, context.extensionPath, outputChannel);
+                if (changes && (changes.changedFiles.length > 0 || changes.deletedFiles.length > 0)) {
+                    // Update RAG for files that were changed while VSCode was closed
+                    outputChannel.appendLine(`[RAG Check] Updating RAG for files changed while VSCode was closed...`);
+                    try {
+                        // Manually set the files since updateRAG expects them in pending sets
+                        changes.changedFiles.forEach(file => pendingChangedFiles.add(file));
+                        changes.deletedFiles.forEach(file => pendingDeletedFiles.add(file));
+                        // Trigger update
+                        await updateRAG(workspaceDir, context.extensionPath, outputChannel);
+                        outputChannel.appendLine(`[RAG Check] ✅ Successfully updated RAG for files changed while VSCode was closed`);
+                    } catch (error: any) {
+                        console.error('Failed to update RAG for changes while closed:', error);
+                        outputChannel.appendLine(`[RAG Check] ⚠️ Warning: Failed to update RAG for some files changed while VSCode was closed`);
+                    }
+                }
+                
                 // Setup file watcher after successful initialization
                 setupFileWatcher(workspaceDir, context.extensionPath, outputChannel);
             } catch (error: any) {
@@ -425,6 +545,25 @@ export function activate(context: vscode.ExtensionContext) {
                     console.log(`New workspace folder added: ${workspaceDir}`);
                     try {
                         await initializeRAG(workspaceDir, context.extensionPath, outputChannel);
+                        
+                        // Check for file changes that occurred while VSCode was closed
+                        const changes = await checkForChangesWhileClosed(workspaceDir, context.extensionPath, outputChannel);
+                        if (changes && (changes.changedFiles.length > 0 || changes.deletedFiles.length > 0)) {
+                            // Update RAG for files that were changed while VSCode was closed
+                            outputChannel.appendLine(`[RAG Check] Updating RAG for files changed while VSCode was closed...`);
+                            try {
+                                // Manually set the files since updateRAG expects them in pending sets
+                                changes.changedFiles.forEach(file => pendingChangedFiles.add(file));
+                                changes.deletedFiles.forEach(file => pendingDeletedFiles.add(file));
+                                // Trigger update
+                                await updateRAG(workspaceDir, context.extensionPath, outputChannel);
+                                outputChannel.appendLine(`[RAG Check] ✅ Successfully updated RAG for files changed while VSCode was closed`);
+                            } catch (error: any) {
+                                console.error('Failed to update RAG for changes while closed:', error);
+                                outputChannel.appendLine(`[RAG Check] ⚠️ Warning: Failed to update RAG for some files changed while VSCode was closed`);
+                            }
+                        }
+                        
                         // Setup file watcher after successful initialization
                         setupFileWatcher(workspaceDir, context.extensionPath, outputChannel);
                     } catch (error: any) {

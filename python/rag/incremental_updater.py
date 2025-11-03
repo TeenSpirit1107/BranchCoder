@@ -26,6 +26,8 @@ async def process_single_file_for_update(
 ) -> Tuple[FileDescription, List, List]:
     """
     Process a single file for incremental update.
+    This is the original version that slices the workspace per file.
+    For better performance when processing multiple files, use process_single_file_for_update_optimized.
     
     Args:
         description_generator: DescriptionGenerator instance
@@ -46,6 +48,38 @@ async def process_single_file_for_update(
     # Filter for the specific file
     file_functions = [fn for fn in function_slice.items if fn.file == rel_file_path]
     file_classes = [cl for cl in class_slice.classes if cl.file == rel_file_path]
+    
+    return await process_single_file_for_update_optimized(
+        description_generator=description_generator,
+        workspace_dir=workspace_dir,
+        rel_file_path=rel_file_path,
+        file_functions=file_functions,
+        file_classes=file_classes,
+    )
+
+
+async def process_single_file_for_update_optimized(
+    description_generator: DescriptionGenerator,
+    workspace_dir: str,
+    rel_file_path: str,
+    file_functions: List,
+    file_classes: List,
+) -> Tuple[FileDescription, List, List]:
+    """
+    Process a single file for incremental update with pre-sliced functions and classes.
+    This optimized version avoids slicing the workspace multiple times.
+    
+    Args:
+        description_generator: DescriptionGenerator instance
+        workspace_dir: Path to the workspace directory
+        rel_file_path: Relative file path within workspace
+        file_functions: Pre-sliced functions for this file
+        file_classes: Pre-sliced classes for this file
+        
+    Returns:
+        Tuple of (FileDescription, List[DescribedFunction], List[DescribedClass])
+    """
+    workspace_path = Path(workspace_dir)
     
     # Group classes by file for the processing method
     classes_by_file = {rel_file_path: file_classes}
@@ -125,31 +159,62 @@ async def update_changed_files_incremental(
     # Files to remove: deleted files + changed files (changed files need to be removed and re-added)
     files_to_remove = deleted_files + changed_files
     
-    # Process each changed/added file
+    # Pre-slice workspace once for all files (more efficient than slicing per file)
+    workspace_path = Path(workspace_dir)
+    logger.info("Slicing workspace to get functions and classes...")
+    function_slice = FunctionSlicer().slice_workspace(workspace_path)
+    class_slice = ClassSlicer().slice_workspace(workspace_path)
+    
+    # Group functions and classes by file for efficient lookup
+    functions_by_file: Dict[str, List] = {}
+    classes_by_file: Dict[str, List] = {}
+    for fn in function_slice.items:
+        functions_by_file.setdefault(fn.file, []).append(fn)
+    for cl in class_slice.classes:
+        classes_by_file.setdefault(cl.file, []).append(cl)
+    
+    # Process all changed/added files concurrently
+    async def process_file_task(rel_file_path: str) -> Tuple[FileDescription, List, List, str]:
+        """Process a single file and return result with file path for error handling"""
+        try:
+            logger.info(f"Processing file: {rel_file_path}")
+            file_desc, described_funcs, described_classes = await process_single_file_for_update_optimized(
+                description_generator=description_generator,
+                workspace_dir=workspace_dir,
+                rel_file_path=rel_file_path,
+                file_functions=functions_by_file.get(rel_file_path, []),
+                file_classes=classes_by_file.get(rel_file_path, []),
+            )
+            logger.info(f"Successfully processed file: {rel_file_path}")
+            return file_desc, described_funcs, described_classes, rel_file_path
+        except asyncio.CancelledError:
+            logger.warning(f"Processing file {rel_file_path} was cancelled (possibly LLM timeout)")
+            raise
+        except Exception as e:
+            logger.error(f"Error processing file {rel_file_path}: {e}", exc_info=True)
+            raise
+    
+    # Create tasks for all files and execute them concurrently
+    tasks = [process_file_task(rel_file_path) for rel_file_path in files_to_process]
+    
     new_file_descs = []
     new_functions = []
     new_classes = []
     
-    for rel_file_path in files_to_process:
-        try:
-            logger.info(f"Processing file: {rel_file_path}")
-            file_desc, described_funcs, described_classes = await process_single_file_for_update(
-                description_generator=description_generator,
-                workspace_dir=workspace_dir,
-                rel_file_path=rel_file_path,
-            )
-            new_file_descs.append(file_desc)
-            new_functions.extend(described_funcs)
-            new_classes.extend(described_classes)
-            logger.info(f"Successfully processed file: {rel_file_path}")
-        except asyncio.CancelledError:
-            # 如果单个文件处理被取消，记录并继续处理其他文件
-            # 不要重新抛出，让定时任务继续运行
-            logger.warning(f"Processing file {rel_file_path} was cancelled (possibly LLM timeout), skipping this file")
+    # Execute all tasks concurrently with error handling
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    
+    for result in results:
+        if isinstance(result, Exception):
+            if isinstance(result, asyncio.CancelledError):
+                logger.warning("A file processing task was cancelled")
+            else:
+                logger.error(f"File processing task failed: {result}")
             continue
-        except Exception as e:
-            logger.error(f"Error processing file {rel_file_path}: {e}", exc_info=True)
-            continue
+        file_desc, described_funcs, described_classes, rel_file_path = result
+        new_file_descs.append(file_desc)
+        new_functions.extend(described_funcs)
+        new_classes.extend(described_classes)
     
     # Update description_output.json: remove old entries and add new ones
     # Remove entries for changed/deleted files
