@@ -28,7 +28,7 @@ from llm.rag_llm import (
 from utils.logger import Logger
 
 # Concurrency limit for async indexing operations (from .env file, default: 2)
-DEFAULT_BUILD_CONCURRENCY = int(os.getenv("RAG_BUILD_CONCURRENCY", "2"))
+DEFAULT_BUILD_CONCURRENCY = int(os.getenv("RAG_INDEXING_CONCURRENCY", "2"))
 
 # Initialize logger for indexing module
 logger = Logger('indexing', log_to_file=False)

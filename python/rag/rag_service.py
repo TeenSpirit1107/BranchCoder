@@ -104,15 +104,7 @@ class RagService:
         logger.info("Successfully reloaded RAG service from existing indices")
         return True
 
-    async def retrival(self, query):
-        if self.indexing_service is None:
-            raise RuntimeError("Indexing service not initialized. Please call initiate() or reload() first.")
-        logger.info(f"retrival start")
-        results = await self.indexing_service.retrieve(query, top_k=5)
-        logger.info(f"retrival finish")
-        return results
-
-    async def update_changed_files(
+    async def update(
         self, 
         workspace_dir: str,
         changed_files: list[str],
@@ -149,3 +141,11 @@ class RagService:
             changed_files=changed_files,
             deleted_files=deleted_files,
         )
+
+    async def retrieve(self, query):
+        if self.indexing_service is None:
+            raise RuntimeError("Indexing service not initialized. Please call initiate() or reload() first.")
+        logger.info(f"retrival start")
+        results = await self.indexing_service.retrieve(query, top_k=5)
+        logger.info(f"retrival finish")
+        return results

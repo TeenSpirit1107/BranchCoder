@@ -10,7 +10,6 @@ import sys
 import os
 import asyncio
 import time
-from pathlib import Path
 from dotenv import load_dotenv
 
 from utils.logger import Logger
@@ -206,7 +205,7 @@ async def update_rag(
         
         # Update all pending changed files
         logger.info(f"Updating all pending changes: {len(all_pending_changed)} changed, {len(all_pending_deleted)} deleted")
-        result = await rag_service.update_changed_files(
+        result = await rag_service.update(
             workspace_dir=workspace_dir,
             changed_files=all_pending_changed,
             deleted_files=all_pending_deleted,

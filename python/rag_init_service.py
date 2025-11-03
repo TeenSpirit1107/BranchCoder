@@ -8,9 +8,7 @@ Receives workspace directory path via stdin and initializes/updates RAG indexing
 
 import json
 import sys
-import os
 import asyncio
-from pathlib import Path
 
 from utils.logger import Logger
 from llm.chat_llm import AsyncChatClientWrapper
@@ -100,7 +98,7 @@ async def initialize_rag(workspace_dir: str) -> dict:
                 # Combine changed and added files as they both need updating
                 all_changed_files = list(set(changed_files + added_files))
                 
-                update_result = await rag_service.update_changed_files(
+                update_result = await rag_service.update(
                     workspace_dir=workspace_dir,
                     changed_files=all_changed_files,
                     deleted_files=deleted_files,
