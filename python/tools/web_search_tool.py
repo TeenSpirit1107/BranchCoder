@@ -9,7 +9,18 @@ which supports multiple search engines including DuckDuckGo, Google, Bing, etc.
 import asyncio
 from typing import Dict, Any, List, Optional
 
-from duckduckgo_search import DDGS
+try:
+    from ddgs import DDGS
+    HAS_DDGS = True
+except ImportError:
+    # Fallback to old package name for backward compatibility
+    try:
+        from duckduckgo_search import DDGS
+        HAS_DDGS = True
+    except ImportError:
+        HAS_DDGS = False
+        DDGS = None
+
 from utils.logger import Logger
 from tools.base_tool import MCPTool
 
@@ -79,20 +90,47 @@ class WebSearchTool(MCPTool):
         Returns:
             List of search results with title, url, and snippet
         """
+        if not HAS_DDGS or DDGS is None:
+            logger.error("DDGS library not available")
+            return []
+        
         try:
             # Create DDGS instance
             ddgs = DDGS()
             
-            # Perform search using DDGS with fixed settings
-            search_results = list(
-                ddgs.text(
+            # Try new ddgs package API first (uses 'query' parameter)
+            try:
+                search_results = ddgs.text(
                     query=query,
                     max_results=max_results,
-                    backend="google",
-                    region="us-en",
-                    safesearch="moderate",
                 )
-            )
+                # Convert to list if it's a generator
+                if search_results is not None:
+                    search_results = list(search_results)
+                else:
+                    search_results = []
+            except TypeError:
+                # Fallback to old duckduckgo_search API (uses 'keywords' parameter)
+                try:
+                    search_results = ddgs.text(
+                        keywords=query,
+                        max_results=max_results,
+                        backend="auto",
+                        region="us-en",
+                        safesearch="moderate",
+                    )
+                    if search_results is None:
+                        search_results = []
+                    else:
+                        search_results = list(search_results)
+                except Exception as e:
+                    logger.error(f"Error with old API: {e}")
+                    search_results = []
+            
+            # Handle empty results
+            if not search_results:
+                logger.warning(f"Search returned no results for query: {query}")
+                return []
             
             # Convert DDGS results to our expected format
             results = []
@@ -109,14 +147,7 @@ class WebSearchTool(MCPTool):
             return results
         except Exception as e:
             logger.error(f"Error in DDGS search: {e}", exc_info=True)
-            return [
-                {
-                    "title": "Search Error",
-                    "url": "",
-                    "snippet": f"Failed to perform search: {str(e)}",
-                    "rank": 0,
-                }
-            ]
+            return []
     
     async def execute(
         self,
