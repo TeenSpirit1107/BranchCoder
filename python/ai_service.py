@@ -29,6 +29,17 @@ except Exception as e:
 history_manager = ConversationHistory()
 logger.info("Conversation history manager initialized")
 
+# System prompt - defines the AI assistant's behavior
+SYSTEM_PROMPT = """You are a helpful AI coding assistant integrated into VS Code. 
+Your role is to assist developers with:
+- Writing and debugging code
+- Explaining code functionality
+- Suggesting improvements and best practices
+- Answering programming questions
+- Helping with code refactoring
+
+Provide clear, concise, and accurate responses. When writing code, ensure it follows best practices and is well-commented when appropriate."""
+
 async def get_ai_response(message: str, session_id: str = "default") -> str:
     """
     Process the user message and generate an AI response using LLM client.
@@ -52,8 +63,12 @@ async def get_ai_response(message: str, session_id: str = "default") -> str:
         # Get conversation history from internal storage
         history = history_manager.get_history(session_id)
         
-        # Build messages list from history and current message
-        messages = history + [{"role": "user", "content": message}]
+        # Build messages list: system prompt + history + current message
+        messages = [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            *history,
+            {"role": "user", "content": message}
+        ]
         
         # Call LLM client
         result = await llm_client.ask(
