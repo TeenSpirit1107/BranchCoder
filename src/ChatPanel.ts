@@ -119,11 +119,24 @@ export class ChatPanel {
                 this.outputChannel.appendLine('='.repeat(80));
             }
 
+            // Get workspace directory
+            const workspaceFolders = vscode.workspace.workspaceFolders;
+            const workspaceDir = workspaceFolders && workspaceFolders.length > 0 
+                ? workspaceFolders[0].uri.fsPath 
+                : undefined;
+
             // Send message to Python process
-            pythonProcess.stdin.write(JSON.stringify({
+            const requestData: any = {
                 message: message,
                 history: this.chatHistory.slice(0, -1) // Send history except current message
-            }));
+            };
+            
+            // Add workspace_dir if available
+            if (workspaceDir) {
+                requestData.workspace_dir = workspaceDir;
+            }
+            
+            pythonProcess.stdin.write(JSON.stringify(requestData));
             pythonProcess.stdin.end();
 
             // Collect output

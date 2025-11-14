@@ -45,6 +45,7 @@ class AsyncChatClientWrapper:
         messages: List[Dict[str, Any]],
         temperature: float = 1,
         tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Literal["none", "auto", Dict[str, Any]]] = None,
         response_format: Optional[Dict[str, Any]] = None,
     ) -> CompletionResult:
         kwargs: Dict[str, Any] = {
@@ -55,6 +56,11 @@ class AsyncChatClientWrapper:
 
         if tools:
             kwargs["tools"] = tools
+            # Set tool_choice to "auto" if tools are provided and tool_choice not explicitly set
+            if tool_choice is None:
+                kwargs["tool_choice"] = "auto"
+            else:
+                kwargs["tool_choice"] = tool_choice
         if response_format:
             kwargs["response_format"] = response_format
 

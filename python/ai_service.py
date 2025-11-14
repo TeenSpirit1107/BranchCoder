@@ -2,6 +2,8 @@
 """
 AI Service for VS Code Extension
 This script receives messages via stdin and returns AI responses via stdout.
+Acts as a simple entry point that receives frontend messages, combines them with history,
+and delegates to the flow module for processing.
 Logs are written to stderr to avoid interfering with JSON output on stdout.
 """
 
@@ -11,86 +13,59 @@ import asyncio
 from typing import List, Dict
 from utils.logger import Logger
 from utils.conversation_history import ConversationHistory
-from llm.chat_llm import AsyncChatClientWrapper
+from flow.flow_agent import FlowAgent
 
 # Initialize logger (logs to stderr by default, no file logging)
 # To enable file logging, set log_to_file=True
 logger = Logger('ai_service', log_to_file=False)
 
-# Initialize LLM client
-try:
-    llm_client = AsyncChatClientWrapper()
-    logger.info("LLM client initialized successfully")
-except Exception as e:
-    logger.error(f"Failed to initialize LLM client: {e}", exc_info=True)
-    llm_client = None
-
 # Initialize conversation history manager
 history_manager = ConversationHistory()
 logger.info("Conversation history manager initialized")
 
-# System prompt - defines the AI assistant's behavior
-SYSTEM_PROMPT = """You are a helpful AI coding assistant integrated into VS Code. 
-Your role is to assist developers with:
-- Writing and debugging code
-- Explaining code functionality
-- Suggesting improvements and best practices
-- Answering programming questions
-- Helping with code refactoring
+# Initialize flow agent
+try:
+    flow_agent = FlowAgent()
+    logger.info("Flow agent initialized successfully")
+except Exception as e:
+    logger.error(f"Failed to initialize flow agent: {e}", exc_info=True)
+    flow_agent = None
 
-Provide clear, concise, and accurate responses. When writing code, ensure it follows best practices and is well-commented when appropriate."""
-
-async def get_ai_response(message: str, session_id: str = "default") -> str:
+async def get_ai_response(message: str, session_id: str = "default", workspace_dir: str = None) -> str:
     """
-    Process the user message and generate an AI response using LLM client.
-    History is managed internally and persisted across calls.
+    Process the user message by combining it with history and delegating to flow agent.
     
     Args:
         message: The current user message
         session_id: Session identifier for conversation history (default: "default")
+        workspace_dir: Optional workspace directory (used for RAG tool initialization and system prompt)
     
     Returns:
         The AI response string
     """
     logger.debug(f"Processing AI request - message length: {len(message)}, session: {session_id}")
     
-    if not llm_client:
-        raise RuntimeError("LLM client is not initialized")
+    if not flow_agent:
+        raise RuntimeError("Flow agent is not initialized")
     
     try:
-        logger.info(f"Generating response for message: {message[:50]}{'...' if len(message) > 50 else ''}")
+        logger.info(f"Processing message: {message[:50]}{'...' if len(message) > 50 else ''}")
         
         # Get conversation history from internal storage
         history = history_manager.get_history(session_id)
         
-        # Build messages list: system prompt + history + current message
+        # Build messages list: history + current message (no system prompt here)
         messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
             *history,
             {"role": "user", "content": message}
         ]
         
-        # Call LLM client
-        result = await llm_client.ask(
-            messages=messages,
-        )
-        
-        # Handle tool calls if needed (for now, just return the answer)
-        if result["type"] == "tool_call":
-            logger.warning(f"Received tool call: {result['tool_name']}, but tool calls are not yet supported in ai_service")
-            response = f"Received tool call request: {result['tool_name']}, but tool execution is not implemented."
-        else:
-            response = result.get("answer", "") or ""
+        # Delegate to flow agent for processing
+        response = await flow_agent.process(messages=messages, workspace_dir=workspace_dir)
         
         # Save user message and assistant response to history
         history_manager.add_message("user", message, session_id)
         history_manager.add_message("assistant", response, session_id)
-        
-        # Log usage statistics
-        usage = result.get("usage", {})
-        logger.info(f"Token usage - prompt: {usage.get('prompt_tokens', 0)}, "
-                   f"completion: {usage.get('completion_tokens', 0)}, "
-                   f"total: {usage.get('total_tokens', 0)}")
         
         logger.debug(f"Generated response length: {len(response)}")
         return response
@@ -122,6 +97,7 @@ async def async_main():
         
         message = data.get("message", "")
         session_id = data.get("session_id", "default")  # Optional session ID
+        workspace_dir = data.get("workspace_dir", None)  # Optional workspace directory
         
         if not message:
             logger.error("No message provided in input data")
@@ -130,7 +106,7 @@ async def async_main():
         logger.info(f"Processing request with message length: {len(message)}, session: {session_id}")
         
         # Get AI response (async) - history is managed internally
-        response = await get_ai_response(message, session_id)
+        response = await get_ai_response(message, session_id, workspace_dir)
         
         # Return JSON response
         output = {
