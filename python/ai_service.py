@@ -31,17 +31,18 @@ except Exception as e:
     logger.error(f"Failed to initialize flow agent: {e}", exc_info=True)
     flow_agent = None
 
-async def get_ai_response(message: str, session_id: str = "default", workspace_dir: str = None) -> str:
+async def get_ai_response(message: str, session_id: str = "default", workspace_dir: str = None):
     """
     Process the user message by combining it with history and delegating to flow agent.
+    This is an async generator that yields streamed messages.
     
     Args:
         message: The current user message
         session_id: Session identifier for conversation history (default: "default")
         workspace_dir: Optional workspace directory (used for RAG tool initialization and system prompt)
     
-    Returns:
-        The AI response string
+    Yields:
+        Dict with message type and content for streaming to frontend
     """
     logger.debug(f"Processing AI request - message length: {len(message)}, session: {session_id}")
     
@@ -60,18 +61,28 @@ async def get_ai_response(message: str, session_id: str = "default", workspace_d
             {"role": "user", "content": message}
         ]
         
-        # Delegate to flow agent for processing
-        response = await flow_agent.process(messages=messages, workspace_dir=workspace_dir)
+        # Track final message for history
+        final_message = None
+        
+        # Delegate to flow agent for processing (async generator)
+        async for msg in flow_agent.process(messages=messages, workspace_dir=workspace_dir):
+            # Yield message to frontend
+            yield msg
+            
+            # Track final message
+            if msg.get("type") == "message":
+                final_message = msg.get("content", "")
         
         # Save user message and assistant response to history
         history_manager.add_message("user", message, session_id)
-        history_manager.add_message("assistant", response, session_id)
-        
-        logger.debug(f"Generated response length: {len(response)}")
-        return response
+        if final_message:
+            history_manager.add_message("assistant", final_message, session_id)
+            logger.debug(f"Generated response length: {len(final_message)}")
         
     except Exception as e:
         logger.error(f"Error in get_ai_response: {e}", exc_info=True)
+        # Yield error message
+        yield {"type": "message", "content": f"错误: {str(e)}"}
         raise
 
 async def async_main():
@@ -105,25 +116,21 @@ async def async_main():
         
         logger.info(f"Processing request with message length: {len(message)}, session: {session_id}")
         
-        # Get AI response (async) - history is managed internally
-        response = await get_ai_response(message, session_id, workspace_dir)
+        # Get AI response (async generator) - stream messages to frontend
+        # Each message is sent as a JSON line (for streaming)
+        async for msg in get_ai_response(message, session_id, workspace_dir):
+            # Send each message as a JSON line to stdout
+            # Frontend will read line by line
+            output_line = json.dumps(msg, ensure_ascii=False)
+            print(output_line, flush=True)
         
-        # Return JSON response
-        output = {
-            "response": response,
-            "status": "success"
-        }
-        
-        logger.info("Response generated successfully, sending to stdout")
-        print(json.dumps(output))
+        logger.info("Response stream completed")
         
     except Exception as e:
         logger.error(f"Error in async_main: {e}", exc_info=True)
-        error_output = {
-            "response": f"Error: {str(e)}",
-            "status": "error"
-        }
-        print(json.dumps(error_output))
+        # Send error as streaming message
+        error_msg = {"type": "message", "content": f"错误: {str(e)}"}
+        print(json.dumps(error_msg, ensure_ascii=False), flush=True)
         sys.exit(1)
 
 def main():

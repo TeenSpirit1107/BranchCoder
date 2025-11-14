@@ -6,8 +6,9 @@ Handles tool calls and orchestrates the conversation with LLM and tools.
 
 import json
 from datetime import datetime
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional, Any, Tuple
 from utils.logger import Logger
+from utils.apply_patch import ApplyPatch
 from llm.chat_llm import AsyncChatClientWrapper
 from tools.register import get_tool_definitions, get_tool, execute_tool_async
 
@@ -36,6 +37,9 @@ class FlowAgent:
         
         # Set workspace directory for tools that support it
         if workspace_dir:
+            # Initialize patch utility
+            self.patch_util = ApplyPatch(workspace_dir=workspace_dir)
+
             # Set workspace directory for RAG tool
             rag_tool = get_tool("workspace_rag_retrieve")
             if rag_tool and hasattr(rag_tool, 'set_workspace_dir'):
@@ -45,11 +49,6 @@ class FlowAgent:
             command_tool = get_tool("execute_command")
             if command_tool and hasattr(command_tool, 'set_workspace_dir'):
                 command_tool.set_workspace_dir(workspace_dir)
-            
-            # Set workspace directory for Apply Patch tool
-            patch_tool = get_tool("apply_patch")
-            if patch_tool and hasattr(patch_tool, 'set_workspace_dir'):
-                patch_tool.set_workspace_dir(workspace_dir)
             
             # Set workspace directory for Workspace Structure tool
             structure_tool = get_tool("get_workspace_structure")
@@ -81,6 +80,24 @@ Your role is to assist developers with:
 
 You have access to various tools that will be provided to you. Use them when appropriate to help the user. 
 Provide clear, concise, and accurate responses.
+
+IMPORTANT: When you provide a final response (not a tool call), you MUST mark it with one of two types:
+1. [TYPE: PATCH] - Use this when your response contains a unified diff patch that should be automatically applied to files.
+   Format: Start your response with "[TYPE: PATCH]" followed by a newline, then provide the patch content.
+   Example:
+   [TYPE: PATCH]
+   --- a/file.py
+   +++ b/file.py
+   @@ -1,3 +1,3 @@
+   ...
+
+2. [TYPE: MESSAGE] - Use this for all other responses (explanations, summaries, reports, etc.) that should be displayed to the user.
+   Format: Start your response with "[TYPE: MESSAGE]" followed by a newline, then provide your message content.
+   Example:
+   [TYPE: MESSAGE]
+   I've completed the task. Here's what I did...
+
+You can call tools multiple times to complete tasks. When you're ready to provide your final response, use one of the above markers.
 
 Current Information:
 - Current Time: {current_time}"""
@@ -117,16 +134,21 @@ Current Information:
         
         return prompt.format(current_time=current_time)
     
-    async def process(self, messages: List[Dict[str, str]], workspace_dir: Optional[str] = None) -> str:
+    async def process(self, messages: List[Dict[str, str]], workspace_dir: Optional[str] = None):
         """
         Process messages through the flow agent with tool support.
+        This is an async generator that yields intermediate messages for streaming to frontend.
         
         Args:
             messages: List of conversation messages (history + current message)
             workspace_dir: Optional workspace directory (used for RAG tool initialization and system prompt)
         
-        Returns:
-            Final response string
+        Yields:
+            Dict with message type and content:
+            - {"type": "status", "content": "..."} - Status updates
+            - {"type": "tool_call", "tool_name": "...", "content": "..."} - Tool call notifications
+            - {"type": "tool_result", "tool_name": "...", "content": "..."} - Tool result summaries
+            - {"type": "message", "content": "..."} - Final message (signals end)
         """
         logger.debug(f"Processing {len(messages)} messages through flow agent")
         
@@ -145,6 +167,9 @@ Current Information:
             iteration += 1
             logger.debug(f"Flow iteration {iteration}")
             
+            # Yield status update
+            yield {"type": "status", "content": f"思考中... (迭代 {iteration})"}
+            
             # Call LLM with tools
             result = await self.llm_client.ask(
                 messages=messages_with_system,
@@ -158,8 +183,27 @@ Current Information:
                 
                 logger.info(f"Tool call: {tool_name} with args: {tool_args}")
                 
+                # Yield tool call notification
+                tool_display_name = tool_name.replace("_", " ").title()
+                yield {
+                    "type": "tool_call",
+                    "tool_name": tool_name,
+                    "content": f"正在调用工具: {tool_display_name}..."
+                }
+                
                 # Execute the tool
                 tool_result = await self._execute_tool(tool_name, tool_args)
+                
+                # Yield tool result summary
+                success = tool_result.get("success", False)
+                result_summary = f"工具 {tool_name} 执行{'成功' if success else '失败'}"
+                if not success and "error" in tool_result:
+                    result_summary += f": {tool_result.get('error', '')}"
+                yield {
+                    "type": "tool_result",
+                    "tool_name": tool_name,
+                    "content": result_summary
+                }
                 
                 # Add tool result to conversation
                 messages_with_system.append({
@@ -183,23 +227,116 @@ Current Information:
                 # Continue loop to get LLM response with tool results
                 continue
             else:
-                # Got a final answer
+                # Got a response without tool call - check for type markers
                 response = result.get("answer", "") or ""
-                logger.info(f"Response generated (length: {len(response)})")
+                logger.info(f"Response generated without tool call (length: {len(response)})")
                 
-                # Check if response contains a patch and auto-apply it
-                response = await self._auto_apply_patch_if_needed(response, workspace_dir)
+                # Parse response type and content
+                response_type, content = self._parse_response_type(response)
                 
-                return response
+                if response_type == "PATCH":
+                    # Handle patch response
+                    logger.info("Detected PATCH type response")
+                    
+                    # Apply the patch
+                    patch_result = await self._apply_patch_from_response(content)
+                    
+                    # Yield final message with patch application result
+                    yield {"type": "message", "content": patch_result}
+                    return
+                elif response_type == "MESSAGE":
+                    # Handle message response - send to frontend
+                    logger.info("Detected MESSAGE type response")
+                    
+                    # Yield final message and return
+                    yield {"type": "message", "content": content}
+                    return
+                else:
+                    # No type marker found - treat as message but log warning
+                    logger.warning("Response without type marker, treating as MESSAGE")
+                    yield {"type": "message", "content": response}
+                    return
         
-        # If we hit max iterations, return the last response
-        logger.warning(f"Reached max iterations ({max_iterations}), returning last response")
-        final_response = result.get("answer", "I apologize, but I encountered an issue processing your request.")
+        # If we hit max iterations, return error message
+        logger.warning(f"Reached max iterations ({max_iterations}), returning error message")
+        error_message = "抱歉，处理请求时遇到问题：已达到最大迭代次数。"
+        yield {"type": "message", "content": error_message}
+    
+    def _parse_response_type(self, response: str) -> Tuple[Optional[str], str]:
+        """
+        Parse response type marker and extract content.
         
-        # Check if response contains a patch and auto-apply it
-        final_response = await self._auto_apply_patch_if_needed(final_response, workspace_dir)
+        Args:
+            response: The LLM response text
         
-        return final_response
+        Returns:
+            Tuple of (response_type, content) where:
+            - response_type: "PATCH", "MESSAGE", or None if no marker found
+            - content: The content after the marker
+        """
+        response = response.strip()
+        
+        # Check for [TYPE: PATCH] marker
+        if response.startswith("[TYPE: PATCH]"):
+            content = response[len("[TYPE: PATCH]"):].strip()
+            # Remove leading newline if present
+            if content.startswith("\n"):
+                content = content[1:]
+            return "PATCH", content
+        
+        # Check for [TYPE: MESSAGE] marker
+        if response.startswith("[TYPE: MESSAGE]"):
+            content = response[len("[TYPE: MESSAGE]"):].strip()
+            # Remove leading newline if present
+            if content.startswith("\n"):
+                content = content[1:]
+            return "MESSAGE", content
+        
+        # No marker found
+        return None, response
+    
+    async def _apply_patch_from_response(self, patch_content: str) -> str:
+        """
+        Apply patch from response content.
+        
+        Args:
+            patch_content: The patch content to apply
+        
+        Returns:
+            Message with patch application results
+        """
+        logger.info("Applying patch from response")
+        
+        # Apply the patch
+        try:
+            result = await self.patch_util.apply(patch_content=patch_content)
+            
+            if result.get("success", False):
+                applied_count = result.get("patches_applied", 0)
+                total_count = result.get("patches_total", 0)
+                logger.info(f"Successfully applied {applied_count}/{total_count} patches")
+                
+                # Build success message
+                message = f"[自动应用补丁成功] 已成功应用 {applied_count}/{total_count} 个补丁。\n\n"
+                
+                # Add details about each patch
+                results = result.get("results", [])
+                for i, patch_result in enumerate(results, 1):
+                    if patch_result.get("success"):
+                        file_path = patch_result.get("file_path", "unknown")
+                        message += f"- 补丁 {i}: 已应用到 {file_path}\n"
+                    else:
+                        error = patch_result.get("error", "unknown error")
+                        message += f"- 补丁 {i}: 应用失败 - {error}\n"
+                
+                return message.strip()
+            else:
+                error = result.get("error", "unknown error")
+                logger.warning(f"Failed to apply patch: {error}")
+                return f"[自动应用补丁失败] {error}"
+        except Exception as e:
+            logger.error(f"Error applying patch: {e}", exc_info=True)
+            return f"[自动应用补丁出错] {str(e)}"
     
     async def _execute_tool(self, tool_name: str, tool_args: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -225,95 +362,4 @@ Current Information:
             logger.error(f"Error executing tool {tool_name}: {e}", exc_info=True)
             return {"error": f"Tool execution failed: {str(e)}"}
     
-    def _detect_patch_in_response(self, response: str) -> Optional[str]:
-        """
-        Detect if the response contains a unified diff patch.
-        
-        Args:
-            response: The LLM response text
-        
-        Returns:
-            Patch content if detected, None otherwise
-        """
-        # Look for unified diff format: starts with --- and +++
-        lines = response.split('\n')
-        
-        # Find potential patch start
-        for i, line in enumerate(lines):
-            if line.strip().startswith('---'):
-                # Check if next line starts with +++
-                if i + 1 < len(lines) and lines[i + 1].strip().startswith('+++'):
-                    # Found patch start, extract the patch
-                    # Look for the end of the patch (next --- or end of response)
-                    patch_lines = [lines[i]]
-                    j = i + 1
-                    while j < len(lines):
-                        # Stop if we find another patch header (but not the first one)
-                        if j > i + 1 and lines[j].strip().startswith('---'):
-                            break
-                        patch_lines.append(lines[j])
-                        j += 1
-                    
-                    patch_content = '\n'.join(patch_lines)
-                    logger.info("Detected patch in LLM response")
-                    return patch_content
-        
-        return None
-    
-    async def _auto_apply_patch_if_needed(self, response: str, workspace_dir: Optional[str] = None) -> str:
-        """
-        Automatically detect and apply patches in the LLM response.
-        
-        Args:
-            response: The LLM response text
-            workspace_dir: Optional workspace directory
-        
-        Returns:
-            Modified response with patch application results appended
-        """
-        patch_content = self._detect_patch_in_response(response)
-        
-        if patch_content:
-            logger.info("Auto-applying detected patch")
-            
-            # Get apply_patch tool
-            patch_tool = get_tool("apply_patch")
-            if patch_tool:
-                # Set workspace directory if available
-                if workspace_dir and hasattr(patch_tool, 'set_workspace_dir'):
-                    patch_tool.set_workspace_dir(workspace_dir)
-                
-                # Apply the patch
-                try:
-                    result = await execute_tool_async("apply_patch", patch_content=patch_content)
-                    
-                    if result.get("success", False):
-                        applied_count = result.get("patches_applied", 0)
-                        total_count = result.get("patches_total", 0)
-                        logger.info(f"Successfully applied {applied_count}/{total_count} patches")
-                        
-                        # Append success message to response
-                        response += f"\n\n[自动应用补丁成功] 已成功应用 {applied_count}/{total_count} 个补丁。"
-                        
-                        # Add details about each patch
-                        results = result.get("results", [])
-                        for i, patch_result in enumerate(results, 1):
-                            if patch_result.get("success"):
-                                file_path = patch_result.get("file_path", "unknown")
-                                response += f"\n- 补丁 {i}: 已应用到 {file_path}"
-                            else:
-                                error = patch_result.get("error", "unknown error")
-                                response += f"\n- 补丁 {i}: 应用失败 - {error}"
-                    else:
-                        error = result.get("error", "unknown error")
-                        logger.warning(f"Failed to apply patch: {error}")
-                        response += f"\n\n[自动应用补丁失败] {error}"
-                except Exception as e:
-                    logger.error(f"Error auto-applying patch: {e}", exc_info=True)
-                    response += f"\n\n[自动应用补丁出错] {str(e)}"
-            else:
-                logger.warning("apply_patch tool not found")
-                response += "\n\n[警告] 检测到补丁但无法应用（apply_patch 工具未找到）"
-        
-        return response
 

@@ -139,9 +139,94 @@ export class ChatPanel {
             pythonProcess.stdin.write(JSON.stringify(requestData));
             pythonProcess.stdin.end();
 
-            // Collect output
+            // Buffer for incomplete lines
+            let buffer = '';
+            let finalMessage = '';
+            let statusMessageId: string | null = null;
+            const generateMessageId = () => `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+            // Collect output line by line (streaming JSON)
             pythonProcess.stdout.on('data', (data: Buffer) => {
-                output += data.toString();
+                buffer += data.toString();
+                const lines = buffer.split('\n');
+                // Keep the last incomplete line in buffer
+                buffer = lines.pop() || '';
+
+                // Process each complete line
+                for (const line of lines) {
+                    if (!line.trim()) continue;
+                    
+                    try {
+                        const msg = JSON.parse(line);
+                        const msgType = msg.type || 'message';
+                        const content = msg.content || '';
+
+                        if (msgType === 'status') {
+                            // Update status message
+                            if (statusMessageId) {
+                                this.webview.postMessage({
+                                    command: 'updateMessage',
+                                    id: statusMessageId,
+                                    content: content,
+                                    isLoading: true
+                                });
+                            } else {
+                                statusMessageId = generateMessageId();
+                                this.webview.postMessage({
+                                    command: 'addMessage',
+                                    role: 'assistant',
+                                    id: statusMessageId,
+                                    content: content,
+                                    isLoading: true
+                                });
+                            }
+                        } else if (msgType === 'tool_call') {
+                            // Show tool call notification
+                            const toolName = msg.tool_name || 'unknown';
+                            this.webview.postMessage({
+                                command: 'addMessage',
+                                role: 'assistant',
+                                id: generateMessageId(),
+                                content: content,
+                                isLoading: true
+                            });
+                        } else if (msgType === 'tool_result') {
+                            // Show tool result
+                            this.webview.postMessage({
+                                command: 'addMessage',
+                                role: 'assistant',
+                                id: generateMessageId(),
+                                content: content,
+                                isLoading: false
+                            });
+                        } else if (msgType === 'message') {
+                            // Final message - replace loading indicator
+                            finalMessage = content;
+                            if (statusMessageId) {
+                                this.webview.postMessage({
+                                    command: 'updateMessage',
+                                    id: statusMessageId,
+                                    content: content,
+                                    isLoading: false
+                                });
+                                statusMessageId = null;
+                            } else {
+                                this.webview.postMessage({
+                                    command: 'addMessage',
+                                    role: 'assistant',
+                                    id: generateMessageId(),
+                                    content: content,
+                                    isLoading: false
+                                });
+                            }
+                        }
+                    } catch (e) {
+                        // If JSON parsing fails, log but continue
+                        if (this.outputChannel) {
+                            this.outputChannel.appendLine(`[WARN] Failed to parse message line: ${line}`);
+                        }
+                    }
+                }
             });
 
             // Send stderr logs to OutputChannel
@@ -157,18 +242,24 @@ export class ChatPanel {
 
             pythonProcess.on('close', (code: number | null) => {
                 if (code === 0) {
-                    try {
-                        const response = JSON.parse(output.trim());
-                        if (this.outputChannel) {
-                            this.outputChannel.appendLine(`[SUCCESS] Request completed successfully\n`);
+                    // Process any remaining buffer
+                    if (buffer.trim()) {
+                        try {
+                            const msg = JSON.parse(buffer.trim());
+                            if (msg.type === 'message' && msg.content) {
+                                finalMessage = msg.content;
+                            }
+                        } catch (e) {
+                            // Ignore parse errors for remaining buffer
                         }
-                        resolve(response.response || response.message || output.trim());
-                    } catch (e) {
-                        if (this.outputChannel) {
-                            this.outputChannel.appendLine(`[ERROR] Error parsing JSON response: ${e}\n`);
-                        }
-                        resolve(output.trim());
                     }
+
+                    if (this.outputChannel) {
+                        this.outputChannel.appendLine(`[SUCCESS] Request completed successfully\n`);
+                    }
+                    
+                    // Resolve with final message (or empty if none)
+                    resolve(finalMessage || '');
                 } else {
                     const errorMsg = errorOutput || `Python process exited with code ${code}`;
                     if (this.outputChannel) {
@@ -299,6 +390,10 @@ export class ChatPanel {
                         }
                     });
                     
+                    // Store message elements by ID for updates
+                    const messageElements = new Map();
+                    let lastMessageId = null;
+                    
                     // Handle messages from extension
                     window.addEventListener('message', event => {
                         const message = event.data;
@@ -306,18 +401,42 @@ export class ChatPanel {
                             case 'addMessage':
                                 const messageDiv = document.createElement('div');
                                 messageDiv.className = \`message \${message.role}\`;
+                                const messageId = message.id || ('msg_' + Date.now() + '_' + Math.random());
+                                messageDiv.setAttribute('data-message-id', messageId);
                                 const content = message.isLoading 
-                                    ? '<em>Thinking...</em>' 
+                                    ? '<em>' + (message.content || 'Thinking...') + '</em>' 
                                     : renderMarkdown(message.content || '');
                                 messageDiv.innerHTML = \`<div class="message-content">\${content}</div>\`;
                                 chatMessages.appendChild(messageDiv);
+                                messageElements.set(messageId, messageDiv);
+                                lastMessageId = messageId;
                                 scrollToBottom();
+                                break;
+                            case 'updateMessage':
+                                // Update existing message by ID
+                                const updateId = message.id || lastMessageId;
+                                if (updateId) {
+                                    const existingDiv = messageElements.get(updateId) || 
+                                        chatMessages.querySelector(\`[data-message-id="\${updateId}"]\`);
+                                    if (existingDiv) {
+                                        const updateContent = message.isLoading 
+                                            ? '<em>' + (message.content || 'Thinking...') + '</em>' 
+                                            : renderMarkdown(message.content || '');
+                                        const contentDiv = existingDiv.querySelector('.message-content');
+                                        if (contentDiv) {
+                                            contentDiv.innerHTML = updateContent;
+                                        }
+                                        scrollToBottom();
+                                    }
+                                }
                                 break;
                             case 'focusInput':
                                 messageInput.focus();
                                 break;
                             case 'clearMessages':
                                 chatMessages.innerHTML = '';
+                                messageElements.clear();
+                                lastMessageId = null;
                                 break;
                         }
                     });
