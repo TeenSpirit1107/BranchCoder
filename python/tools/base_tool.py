@@ -15,6 +15,17 @@ class MCPTool(ABC):
     """
     
     @property
+    def agent_tool(self) -> bool:
+        """
+        Whether this tool should be exposed to the LLM agent.
+        If False, the tool will be registered but not available for LLM function calling.
+        
+        Returns:
+            True if tool should be available to LLM, False otherwise (default: True)
+        """
+        return True
+    
+    @property
     @abstractmethod
     def name(self) -> str:
         """

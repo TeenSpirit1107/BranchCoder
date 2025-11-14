@@ -144,12 +144,17 @@ def get_all_tools() -> Dict[str, MCPTool]:
 
 def get_tool_definitions() -> List[Dict[str, Any]]:
     """
-    Get tool definitions for all registered tools (for LLM function calling).
+    Get tool definitions for all registered tools that are agent_tools (for LLM function calling).
+    Only tools with agent_tool=True will be included.
     
     Returns:
-        List of tool definition dictionaries
+        List of tool definition dictionaries for agent tools only
     """
-    return [tool.get_tool_definition() for tool in _tool_registry.values()]
+    return [
+        tool.get_tool_definition() 
+        for tool in _tool_registry.values() 
+        if tool.agent_tool
+    ]
 
 
 def execute_tool(tool_name: str, **kwargs) -> Dict[str, Any]:

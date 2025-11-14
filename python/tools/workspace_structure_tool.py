@@ -15,6 +15,11 @@ logger = Logger('workspace_structure_tool', log_to_file=False)
 class WorkspaceStructureTool(MCPTool):
     """Tool for getting the file structure of the workspace."""
     
+    @property
+    def agent_tool(self) -> bool:
+        """This tool is not exposed to LLM agent (internal use only)."""
+        return False
+    
     # Default ignore patterns
     DEFAULT_IGNORE_PATTERNS = [
         '__pycache__',

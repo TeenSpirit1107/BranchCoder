@@ -16,6 +16,11 @@ logger = Logger('apply_patch_tool', log_to_file=False)
 class ApplyPatchTool(MCPTool):
     """Tool for applying unified diff patches to files."""
     
+    @property
+    def agent_tool(self) -> bool:
+        """This tool is not exposed to LLM agent (internal use only)."""
+        return False
+    
     def __init__(self):
         """Initialize apply patch tool."""
         self.workspace_dir: Optional[str] = None

@@ -13,41 +13,6 @@ from tools.register import get_tool_definitions, get_tool, execute_tool_async
 
 logger = Logger('flow_agent', log_to_file=False)
 
-def _generate_system_prompt(workspace_dir: Optional[str] = None, workspace_structure: Optional[str] = None) -> str:
-    """
-    Generate system prompt with workspace directory, current time, and workspace structure.
-    
-    Args:
-        workspace_dir: Optional workspace directory path
-        workspace_structure: Optional workspace file structure tree
-    
-    Returns:
-        System prompt string
-    """
-    current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    
-    prompt = """You are a helpful AI coding assistant integrated into VS Code. 
-Your role is to assist developers with:
-- Writing and debugging code
-- Explaining code functionality
-- Suggesting improvements and best practices
-- Answering programming questions
-- Helping with code refactoring
-
-You have access to various tools that will be provided to you. Use them when appropriate to help the user. 
-Provide clear, concise, and accurate responses.
-
-Current Information:
-- Current Time: {current_time}"""
-    
-    if workspace_dir:
-        prompt += f"\n- Workspace Directory: {workspace_dir}"
-    
-    if workspace_structure:
-        prompt += f"\n\nWorkspace File Structure:\n{workspace_structure}"
-    
-    return prompt.format(current_time=current_time)
-
 
 class FlowAgent:
     """Main flow agent that orchestrates LLM interactions with tools."""
@@ -93,22 +58,38 @@ class FlowAgent:
         
         logger.info(f"Flow agent initialized with {len(self.tools)} tools: {[t['function']['name'] for t in self.tools]}")
     
-    async def process(self, messages: List[Dict[str, str]], workspace_dir: Optional[str] = None) -> str:
+    async def generate_system_prompt(self, workspace_dir: Optional[str] = None) -> str:
         """
-        Process messages through the flow agent with tool support.
+        Generate system prompt with workspace directory, current time, and workspace structure.
+        This method will fetch the workspace structure each time it's called.
         
         Args:
-            messages: List of conversation messages (history + current message)
-            workspace_dir: Optional workspace directory (used for RAG tool initialization and system prompt)
+            workspace_dir: Optional workspace directory path
         
         Returns:
-            Final response string
+            System prompt string
         """
-        logger.debug(f"Processing {len(messages)} messages through flow agent")
+        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         
-        # Get workspace structure if workspace_dir is available
-        workspace_structure = None
+        prompt = """You are a helpful AI coding assistant integrated into VS Code. 
+Your role is to assist developers with:
+- Writing and debugging code
+- Explaining code functionality
+- Suggesting improvements and best practices
+- Answering programming questions
+- Helping with code refactoring
+
+You have access to various tools that will be provided to you. Use them when appropriate to help the user. 
+Provide clear, concise, and accurate responses.
+
+Current Information:
+- Current Time: {current_time}"""
+        
         if workspace_dir:
+            prompt += f"\n- Workspace Directory: {workspace_dir}"
+            
+            # Get workspace structure if workspace_dir is available
+            workspace_structure = None
             try:
                 structure_tool = get_tool("get_workspace_structure")
                 if structure_tool:
@@ -130,12 +111,27 @@ class FlowAgent:
             except Exception as e:
                 logger.warning(f"Failed to get workspace structure: {e}", exc_info=True)
                 # Continue without structure if it fails
+            
+            if workspace_structure:
+                prompt += f"\n\nWorkspace File Structure:\n{workspace_structure}"
         
-        # Add system prompt to messages (includes workspace_dir, current time, and workspace structure)
-        system_prompt = _generate_system_prompt(
-            workspace_dir=workspace_dir,
-            workspace_structure=workspace_structure
-        )
+        return prompt.format(current_time=current_time)
+    
+    async def process(self, messages: List[Dict[str, str]], workspace_dir: Optional[str] = None) -> str:
+        """
+        Process messages through the flow agent with tool support.
+        
+        Args:
+            messages: List of conversation messages (history + current message)
+            workspace_dir: Optional workspace directory (used for RAG tool initialization and system prompt)
+        
+        Returns:
+            Final response string
+        """
+        logger.debug(f"Processing {len(messages)} messages through flow agent")
+        
+        # Generate system prompt (includes workspace_dir, current time, and workspace structure)
+        system_prompt = await self.generate_system_prompt(workspace_dir=workspace_dir)
         messages_with_system = [
             {"role": "system", "content": system_prompt},
             *messages
@@ -189,7 +185,7 @@ class FlowAgent:
             else:
                 # Got a final answer
                 response = result.get("answer", "") or ""
-                logger.info(f"Final response generated (length: {len(response)})")
+                logger.info(f"Response generated (length: {len(response)})")
                 
                 # Check if response contains a patch and auto-apply it
                 response = await self._auto_apply_patch_if_needed(response, workspace_dir)
