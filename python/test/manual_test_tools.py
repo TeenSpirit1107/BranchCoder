@@ -17,6 +17,7 @@ from tools.lint_tool import LintTool
 from tools.web_search_tool import WebSearchTool
 from tools.fetch_url_tool import FetchUrlTool
 from tools.workspace_rag_tool import WorkspaceRAGTool
+from tools.workspace_structure_tool import WorkspaceStructureTool
 
 
 class ToolTester:
@@ -30,6 +31,7 @@ class ToolTester:
             "3": ("WebSearchTool", WebSearchTool()),
             "4": ("FetchUrlTool", FetchUrlTool()),
             "5": ("WorkspaceRAGTool", WorkspaceRAGTool()),
+            "6": ("WorkspaceStructureTool", WorkspaceStructureTool()),
         }
         self.workspace_dir = None
     
@@ -209,6 +211,54 @@ class ToolTester:
         result = await tool.execute(query=query)
         self.print_result(result, "WorkspaceRAGTool")
     
+    async def test_workspace_structure_tool(self):
+        """测试 WorkspaceStructureTool"""
+        tool = self.tools["6"][1]
+        
+        print("\n--- WorkspaceStructureTool 测试 ---")
+        
+        if not self.workspace_dir:
+            workspace_input = input("请输入工作区目录路径: ").strip()
+            if workspace_input:
+                self.workspace_dir = workspace_input
+                tool.set_workspace_dir(self.workspace_dir)
+            else:
+                print("未设置工作区目录，将使用当前目录")
+        else:
+            change_input = input(f"当前工作区: {self.workspace_dir}\n是否更改? (y/n): ").strip().lower()
+            if change_input == "y":
+                workspace_input = input("请输入新的工作区目录路径: ").strip()
+                if workspace_input:
+                    self.workspace_dir = workspace_input
+                    tool.set_workspace_dir(self.workspace_dir)
+            else:
+                tool.set_workspace_dir(self.workspace_dir)
+        
+        max_depth_input = input("最大深度 (默认5, 0表示无限制): ").strip()
+        max_depth = int(max_depth_input) if max_depth_input else 5
+        
+        include_files_input = input("包含文件? (y/n, 默认y): ").strip().lower()
+        include_files = include_files_input != "n"
+        
+        include_hidden_input = input("包含隐藏文件? (y/n, 默认n): ").strip().lower()
+        include_hidden = include_hidden_input == "y"
+        
+        print(f"\n获取工作区结构...")
+        result = await tool.execute(
+            max_depth=max_depth,
+            include_files=include_files,
+            include_hidden=include_hidden
+        )
+        self.print_result(result, "WorkspaceStructureTool")
+        
+        # 如果成功，也打印结构树
+        if result.get("success") and "structure" in result:
+            print("\n" + "=" * 80)
+            print("文件结构树:")
+            print("=" * 80)
+            print(result["structure"])
+            print("=" * 80)
+    
     async def run(self):
         """运行交互式测试程序"""
         print("欢迎使用工具测试程序！")
@@ -216,7 +266,7 @@ class ToolTester:
         
         while True:
             self.print_menu()
-            choice = input("\n请选择要测试的工具 (0-5): ").strip()
+            choice = input("\n请选择要测试的工具 (0-6): ").strip()
             
             if choice == "0":
                 print("\n退出程序")
@@ -231,6 +281,8 @@ class ToolTester:
                 await self.test_fetch_url_tool()
             elif choice == "5":
                 await self.test_workspace_rag_tool()
+            elif choice == "6":
+                await self.test_workspace_structure_tool()
             else:
                 print("无效的选择，请重试")
             

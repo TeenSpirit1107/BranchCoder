@@ -44,6 +44,13 @@ uv run python manual_test_tools.py
 - 输入搜索查询
 - 显示相关的代码文件、函数和类
 
+### 6. ApplyPatchTool - 应用补丁
+- 可以输入补丁内容或从文件读取
+- 支持 unified diff 格式的补丁
+- 可以设置目标文件路径（可选）
+- 支持 dry run 模式（仅验证不应用）
+- 自动应用到工作区中的文件
+
 ## 使用示例
 
 ### 测试命令工具
@@ -86,6 +93,21 @@ URL: https://www.example.com
 选择工具: 5
 工作区目录: /path/to/workspace
 搜索查询: function definition
+```
+
+### 测试补丁应用
+```
+选择工具: 6
+输入方式: 1 (直接输入)
+补丁内容:
+--- test.txt
++++ test.txt
+@@ -1,1 +1,1 @@
+-Old content
++New content
+
+目标文件路径: test.txt (可选)
+仅验证不应用: n
 ```
 
 ## 输出格式
