@@ -48,8 +48,13 @@ Current Information:
 class FlowAgent:
     """Main flow agent that orchestrates LLM interactions with tools."""
     
-    def __init__(self):
-        """Initialize the flow agent with LLM client and tools."""
+    def __init__(self, workspace_dir: Optional[str] = None):
+        """
+        Initialize the flow agent with LLM client and tools.
+        
+        Args:
+            workspace_dir: Optional workspace directory (used for RAG tool initialization)
+        """
         try:
             self.llm_client = AsyncChatClientWrapper()
             logger.info("LLM client initialized successfully")
@@ -59,6 +64,18 @@ class FlowAgent:
         
         # Get all registered tools (automatically registered via tools.register)
         self.tools = get_tool_definitions()
+        
+        # Set workspace directory for tools that support it
+        if workspace_dir:
+            # Set workspace directory for RAG tool
+            rag_tool = get_tool("workspace_rag_retrieve")
+            if rag_tool and hasattr(rag_tool, 'set_workspace_dir'):
+                rag_tool.set_workspace_dir(workspace_dir)
+            
+            # Set workspace directory for Command tool
+            command_tool = get_tool("execute_command")
+            if command_tool and hasattr(command_tool, 'set_workspace_dir'):
+                command_tool.set_workspace_dir(workspace_dir)
         
         logger.info(f"Flow agent initialized with {len(self.tools)} tools: {[t['function']['name'] for t in self.tools]}")
     
@@ -74,18 +91,6 @@ class FlowAgent:
             Final response string
         """
         logger.debug(f"Processing {len(messages)} messages through flow agent")
-        
-        # Set workspace directory for tools that support it
-        if workspace_dir:
-            # Set workspace directory for RAG tool
-            rag_tool = get_tool("workspace_rag_retrieve")
-            if rag_tool and hasattr(rag_tool, 'set_workspace_dir'):
-                rag_tool.set_workspace_dir(workspace_dir)
-            
-            # Set workspace directory for Command tool
-            command_tool = get_tool("execute_command")
-            if command_tool and hasattr(command_tool, 'set_workspace_dir'):
-                command_tool.set_workspace_dir(workspace_dir)
         
         # Add system prompt to messages (includes workspace_dir and current time)
         system_prompt = _generate_system_prompt(workspace_dir=workspace_dir)
