@@ -10,6 +10,7 @@ import sys
 import asyncio
 from typing import List, Dict
 from utils.logger import Logger
+from utils.conversation_history import ConversationHistory
 from llm.chat_llm import AsyncChatClientWrapper
 
 # Initialize logger (logs to stderr by default, no file logging)
@@ -24,18 +25,23 @@ except Exception as e:
     logger.error(f"Failed to initialize LLM client: {e}", exc_info=True)
     llm_client = None
 
-async def get_ai_response(message: str, history: List[Dict[str, str]]) -> str:
+# Initialize conversation history manager
+history_manager = ConversationHistory()
+logger.info("Conversation history manager initialized")
+
+async def get_ai_response(message: str, session_id: str = "default") -> str:
     """
     Process the user message and generate an AI response using LLM client.
+    History is managed internally and persisted across calls.
     
     Args:
         message: The current user message
-        history: List of previous messages in format [{"role": "user|assistant", "content": "..."}]
+        session_id: Session identifier for conversation history (default: "default")
     
     Returns:
         The AI response string
     """
-    logger.debug(f"Processing AI request - message length: {len(message)}, history length: {len(history)}")
+    logger.debug(f"Processing AI request - message length: {len(message)}, session: {session_id}")
     
     if not llm_client:
         raise RuntimeError("LLM client is not initialized")
@@ -43,9 +49,11 @@ async def get_ai_response(message: str, history: List[Dict[str, str]]) -> str:
     try:
         logger.info(f"Generating response for message: {message[:50]}{'...' if len(message) > 50 else ''}")
         
+        # Get conversation history from internal storage
+        history = history_manager.get_history(session_id)
+        
         # Build messages list from history and current message
-        messages = history.copy()
-        messages.append({"role": "user", "content": message})
+        messages = history + [{"role": "user", "content": message}]
         
         # Call LLM client
         result = await llm_client.ask(
@@ -58,6 +66,10 @@ async def get_ai_response(message: str, history: List[Dict[str, str]]) -> str:
             response = f"Received tool call request: {result['tool_name']}, but tool execution is not implemented."
         else:
             response = result.get("answer", "") or ""
+        
+        # Save user message and assistant response to history
+        history_manager.add_message("user", message, session_id)
+        history_manager.add_message("assistant", response, session_id)
         
         # Log usage statistics
         usage = result.get("usage", {})
@@ -94,16 +106,16 @@ async def async_main():
             raise
         
         message = data.get("message", "")
-        history = data.get("history", [])
+        session_id = data.get("session_id", "default")  # Optional session ID
         
         if not message:
             logger.error("No message provided in input data")
             raise ValueError("No message provided")
         
-        logger.info(f"Processing request with message length: {len(message)}")
+        logger.info(f"Processing request with message length: {len(message)}, session: {session_id}")
         
-        # Get AI response (async)
-        response = await get_ai_response(message, history)
+        # Get AI response (async) - history is managed internally
+        response = await get_ai_response(message, session_id)
         
         # Return JSON response
         output = {
