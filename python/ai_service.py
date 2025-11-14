@@ -10,7 +10,8 @@ Logs are written to stderr to avoid interfering with JSON output on stdout.
 import json
 import sys
 import asyncio
-from typing import List, Dict
+from typing import List, Dict, Any
+from dataclasses import asdict
 from utils.logger import Logger
 from utils.conversation_history import ConversationHistory
 from flow.flow_agent import FlowAgent
@@ -30,6 +31,30 @@ try:
 except Exception as e:
     logger.error(f"Failed to initialize flow agent: {e}", exc_info=True)
     flow_agent = None
+
+
+def _message_to_dict(message: Any) -> Dict[str, Any]:
+    """
+    Convert message to dictionary format for JSON serialization.
+    Handles both dict and model instances (dataclasses with to_dict() or asdict).
+    
+    Args:
+        message: Message dict or model instance
+    
+    Returns:
+        Dictionary representation of the message
+    """
+    if isinstance(message, dict):
+        return message
+    elif hasattr(message, 'to_dict'):
+        return message.to_dict()
+    else:
+        # Try asdict for dataclass instances
+        try:
+            return asdict(message)
+        except (TypeError, ValueError):
+            # Fallback: try to convert to dict
+            return dict(message) if hasattr(message, '__dict__') else {"type": "unknown", "content": str(message)}
 
 async def get_ai_response(message: str, session_id: str = "default", workspace_dir: str = None):
     """
@@ -66,12 +91,14 @@ async def get_ai_response(message: str, session_id: str = "default", workspace_d
         
         # Delegate to flow agent for processing (async generator)
         async for msg in flow_agent.process(messages=messages, workspace_dir=workspace_dir):
+            # Convert message to dict for JSON serialization
+            msg_dict = _message_to_dict(msg)
             # Yield message to frontend
-            yield msg
+            yield msg_dict
             
             # Track final message
-            if msg.get("type") == "message":
-                final_message = msg.get("content", "")
+            if msg_dict.get("type") == "message":
+                final_message = msg_dict.get("content", "")
         
         # Save user message and assistant response to history
         history_manager.add_message("user", message, session_id)
@@ -119,6 +146,7 @@ async def async_main():
         # Get AI response (async generator) - stream messages to frontend
         # Each message is sent as a JSON line (for streaming)
         async for msg in get_ai_response(message, session_id, workspace_dir):
+            # msg is already a dict from get_ai_response (converted via _message_to_dict)
             # Send each message as a JSON line to stdout
             # Frontend will read line by line
             output_line = json.dumps(msg, ensure_ascii=False)

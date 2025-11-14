@@ -8,6 +8,7 @@ from utils.logger import Logger
 from llm.chat_llm import AsyncChatClientWrapper
 from rag.rag_service import RagService
 from tools.base_tool import MCPTool
+from model import ToolCallMessage, ToolResultMessage
 
 logger = Logger('workspace_rag_tool', log_to_file=False)
 
@@ -111,6 +112,65 @@ class WorkspaceRAGTool(MCPTool):
                 }
             }
         }
+    
+    def get_call_notification(self, tool_args: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """
+        Get custom notification for workspace RAG tool call.
+        
+        Args:
+            tool_args: Tool arguments containing 'query'
+        
+        Returns:
+            Custom notification dictionary (can also return model instance)
+        """
+        query = tool_args.get("query", "")
+        # Truncate long queries for display
+        display_query = query[:50] + "..." if len(query) > 50 else query
+        return ToolCallMessage(
+            tool_name=self.name,
+            content=f"正在检索代码: {display_query}"
+        )
+    
+    def get_result_notification(self, tool_result: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """
+        Get custom notification for workspace RAG tool result.
+        
+        Args:
+            tool_result: Tool execution result
+        
+        Returns:
+            Custom notification dictionary (can also return model instance)
+        """
+        success = tool_result.get("success", False)
+        if not success:
+            error = tool_result.get("error", "未知错误")
+            return ToolResultMessage(
+                tool_name=self.name,
+                content=f"代码检索失败: {error}"
+            )
+        
+        count = tool_result.get("count", 0)
+        by_type = tool_result.get("by_type", {})
+        
+        if count == 0:
+            return ToolResultMessage(
+                tool_name=self.name,
+                content="代码检索完成，未找到相关结果"
+            )
+        
+        type_summary = []
+        if by_type.get("file", 0) > 0:
+            type_summary.append(f"{by_type['file']}个文件")
+        if by_type.get("function", 0) > 0:
+            type_summary.append(f"{by_type['function']}个函数")
+        if by_type.get("class", 0) > 0:
+            type_summary.append(f"{by_type['class']}个类")
+        
+        summary = "、".join(type_summary) if type_summary else f"{count}个结果"
+        return ToolResultMessage(
+            tool_name=self.name,
+            content=f"代码检索完成，找到{summary}"
+        )
     
     async def execute(self, query: str) -> Dict[str, Any]:
         """

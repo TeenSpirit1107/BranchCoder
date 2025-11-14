@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional
 from utils.logger import Logger
 from tools.base_tool import MCPTool
+from model import ToolCallMessage, ToolResultMessage
 
 logger = Logger('lint_tool', log_to_file=False)
 
@@ -56,6 +57,70 @@ class LintTool(MCPTool):
                 }
             }
         }
+    
+    def get_call_notification(self, tool_args: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """
+        Get custom notification for lint tool call.
+        
+        Args:
+            tool_args: Tool arguments containing 'file_path' or 'code'
+        
+        Returns:
+            Custom notification dictionary (can also return model instance)
+        """
+        file_path = tool_args.get("file_path")
+        if file_path:
+            return ToolCallMessage(
+                tool_name=self.name,
+                content=f"正在检查代码: {file_path}"
+            )
+        else:
+            code = tool_args.get("code", "")
+            code_preview = code[:30] + "..." if len(code) > 30 else code
+            return ToolCallMessage(
+                tool_name=self.name,
+                content=f"正在检查代码: {code_preview}"
+            )
+    
+    def get_result_notification(self, tool_result: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """
+        Get custom notification for lint tool result.
+        
+        Args:
+            tool_result: Tool execution result
+        
+        Returns:
+            Custom notification dictionary (can also return model instance)
+        """
+        success = tool_result.get("success", False)
+        if not success:
+            error = tool_result.get("error", "未知错误")
+            return ToolResultMessage(
+                tool_name=self.name,
+                content=f"代码检查失败: {error}"
+            )
+        
+        total_issues = tool_result.get("total_issues", 0)
+        error_count = tool_result.get("error_count", 0)
+        warning_count = tool_result.get("warning_count", 0)
+        
+        if total_issues == 0:
+            return ToolResultMessage(
+                tool_name=self.name,
+                content="代码检查完成，未发现任何问题"
+            )
+        else:
+            issue_summary = []
+            if error_count > 0:
+                issue_summary.append(f"{error_count}个错误")
+            if warning_count > 0:
+                issue_summary.append(f"{warning_count}个警告")
+            
+            summary = "、".join(issue_summary) if issue_summary else f"{total_issues}个问题"
+            return ToolResultMessage(
+                tool_name=self.name,
+                content=f"代码检查完成，发现{summary}"
+            )
     
     def _check_python_syntax(self, code: str, file_path: Optional[str] = None) -> List[Dict[str, Any]]:
         """

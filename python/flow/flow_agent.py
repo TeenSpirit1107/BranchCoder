@@ -11,6 +11,7 @@ from utils.logger import Logger
 from utils.apply_patch import ApplyPatch
 from llm.chat_llm import AsyncChatClientWrapper
 from tools.register import get_tool_definitions, get_tool, execute_tool_async
+from model import StatusMessage, ToolCallMessage, ToolResultMessage, FinalMessage
 
 logger = Logger('flow_agent', log_to_file=False)
 
@@ -144,11 +145,13 @@ Current Information:
             workspace_dir: Optional workspace directory (used for RAG tool initialization and system prompt)
         
         Yields:
-            Dict with message type and content:
-            - {"type": "status", "content": "..."} - Status updates
-            - {"type": "tool_call", "tool_name": "...", "content": "..."} - Tool call notifications
-            - {"type": "tool_result", "tool_name": "...", "content": "..."} - Tool result summaries
-            - {"type": "message", "content": "..."} - Final message (signals end)
+            Message objects (StatusMessage, ToolCallMessage, ToolResultMessage, FinalMessage) or dicts.
+            The caller is responsible for converting these to dictionaries for JSON serialization.
+            Message types:
+            - StatusMessage(type="status", content="...") - Status updates
+            - ToolCallMessage(type="tool_call", tool_name="...", content="...") - Tool call notifications
+            - ToolResultMessage(type="tool_result", tool_name="...", content="...") - Tool result summaries
+            - FinalMessage(type="message", content="...") - Final message (signals end)
         """
         logger.debug(f"Processing {len(messages)} messages through flow agent")
         
@@ -168,7 +171,7 @@ Current Information:
             logger.debug(f"Flow iteration {iteration}")
             
             # Yield status update
-            yield {"type": "status", "content": f"思考中... (迭代 {iteration})"}
+            yield StatusMessage(content=f"思考中... (迭代 {iteration})")
             
             # Call LLM with tools
             result = await self.llm_client.ask(
@@ -183,27 +186,21 @@ Current Information:
                 
                 logger.info(f"Tool call: {tool_name} with args: {tool_args}")
                 
+                # Get tool instance for custom notifications
+                tool = get_tool(tool_name)
+                
                 # Yield tool call notification
-                tool_display_name = tool_name.replace("_", " ").title()
-                yield {
-                    "type": "tool_call",
-                    "tool_name": tool_name,
-                    "content": f"正在调用工具: {tool_display_name}..."
-                }
+                notification = tool.get_call_notification(tool_args)
+                if notification is not None:
+                    yield notification
                 
                 # Execute the tool
                 tool_result = await self._execute_tool(tool_name, tool_args)
                 
                 # Yield tool result summary
-                success = tool_result.get("success", False)
-                result_summary = f"工具 {tool_name} 执行{'成功' if success else '失败'}"
-                if not success and "error" in tool_result:
-                    result_summary += f": {tool_result.get('error', '')}"
-                yield {
-                    "type": "tool_result",
-                    "tool_name": tool_name,
-                    "content": result_summary
-                }
+                result_notification = tool.get_result_notification(tool_result)
+                if result_notification is not None:
+                    yield result_notification
                 
                 # Add tool result to conversation
                 messages_with_system.append({
@@ -241,26 +238,46 @@ Current Information:
                     # Apply the patch
                     patch_result = await self._apply_patch_from_response(content)
                     
-                    # Yield final message with patch application result
-                    yield {"type": "message", "content": patch_result}
-                    return
+                    if patch_result.get("success", False):
+                        # Success - yield message and return
+                        yield FinalMessage(
+                            content=f"[自动应用补丁成功]\n\n{patch_result['message']}"
+                        )
+                        return
+                    else:
+                        # Failed - add error to conversation and continue loop
+                        error = patch_result.get("error", "unknown error")
+                        logger.warning(f"Patch application failed: {error}")
+                        
+                        # Add assistant's patch attempt and error to conversation
+                        messages_with_system.append({
+                            "role": "assistant",
+                            "content": response
+                        })
+                        messages_with_system.append({
+                            "role": "user",
+                            "content": f"补丁应用失败：{error}\n\n请检查补丁内容并重新生成正确的补丁。"
+                        })
+                        
+                        # Continue loop to get LLM response with error feedback
+                        continue
                 elif response_type == "MESSAGE":
                     # Handle message response - send to frontend
                     logger.info("Detected MESSAGE type response")
                     
                     # Yield final message and return
-                    yield {"type": "message", "content": content}
+                    yield FinalMessage(content=content)
                     return
                 else:
                     # No type marker found - treat as message but log warning
                     logger.warning("Response without type marker, treating as MESSAGE")
-                    yield {"type": "message", "content": response}
+                    yield FinalMessage(content=response)
                     return
         
         # If we hit max iterations, return error message
         logger.warning(f"Reached max iterations ({max_iterations}), returning error message")
         error_message = "抱歉，处理请求时遇到问题：已达到最大迭代次数。"
-        yield {"type": "message", "content": error_message}
+        yield FinalMessage(content=error_message)
     
     def _parse_response_type(self, response: str) -> Tuple[Optional[str], str]:
         """
@@ -295,7 +312,7 @@ Current Information:
         # No marker found
         return None, response
     
-    async def _apply_patch_from_response(self, patch_content: str) -> str:
+    async def _apply_patch_from_response(self, patch_content: str) -> Dict[str, Any]:
         """
         Apply patch from response content.
         
@@ -303,11 +320,14 @@ Current Information:
             patch_content: The patch content to apply
         
         Returns:
-            Message with patch application results
+            Dictionary with:
+            - success: bool - Whether patch was applied successfully
+            - message: str - Success message (if successful)
+            - error: str - Error message (if failed)
+            - details: List - Details about each patch (if successful)
         """
         logger.info("Applying patch from response")
         
-        # Apply the patch
         try:
             result = await self.patch_util.apply(patch_content=patch_content)
             
@@ -317,26 +337,39 @@ Current Information:
                 logger.info(f"Successfully applied {applied_count}/{total_count} patches")
                 
                 # Build success message
-                message = f"[自动应用补丁成功] 已成功应用 {applied_count}/{total_count} 个补丁。\n\n"
+                message = f"已成功应用 {applied_count}/{total_count} 个补丁。\n\n"
                 
                 # Add details about each patch
+                details = []
                 results = result.get("results", [])
                 for i, patch_result in enumerate(results, 1):
                     if patch_result.get("success"):
                         file_path = patch_result.get("file_path", "unknown")
-                        message += f"- 补丁 {i}: 已应用到 {file_path}\n"
+                        details.append(f"- 补丁 {i}: 已应用到 {file_path}")
                     else:
                         error = patch_result.get("error", "unknown error")
-                        message += f"- 补丁 {i}: 应用失败 - {error}\n"
+                        details.append(f"- 补丁 {i}: 应用失败 - {error}")
                 
-                return message.strip()
+                message += "\n".join(details)
+                
+                return {
+                    "success": True,
+                    "message": message,
+                    "details": details
+                }
             else:
                 error = result.get("error", "unknown error")
                 logger.warning(f"Failed to apply patch: {error}")
-                return f"[自动应用补丁失败] {error}"
+                return {
+                    "success": False,
+                    "error": error
+                }
         except Exception as e:
             logger.error(f"Error applying patch: {e}", exc_info=True)
-            return f"[自动应用补丁出错] {str(e)}"
+            return {
+                "success": False,
+                "error": str(e)
+            }
     
     async def _execute_tool(self, tool_name: str, tool_args: Dict[str, Any]) -> Dict[str, Any]:
         """

@@ -23,6 +23,7 @@ except ImportError:
 
 from utils.logger import Logger
 from tools.base_tool import MCPTool
+from model import ToolCallMessage, ToolResultMessage
 
 logger = Logger('web_search_tool', log_to_file=False)
 
@@ -74,6 +75,55 @@ class WebSearchTool(MCPTool):
                 }
             }
         }
+    
+    def get_call_notification(self, tool_args: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """
+        Get custom notification for web search tool call.
+        
+        Args:
+            tool_args: Tool arguments containing 'query'
+        
+        Returns:
+            Custom notification dictionary (can also return model instance)
+        """
+        query = tool_args.get("query", "")
+        search_type = tool_args.get("search_type", "general")
+        # Truncate long queries for display
+        display_query = query[:50] + "..." if len(query) > 50 else query
+        return ToolCallMessage(
+            tool_name=self.name,
+            content=f"正在搜索: {display_query} (类型: {search_type})"
+        )
+    
+    def get_result_notification(self, tool_result: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """
+        Get custom notification for web search tool result.
+        
+        Args:
+            tool_result: Tool execution result
+        
+        Returns:
+            Custom notification dictionary (can also return model instance)
+        """
+        status = tool_result.get("status", "error")
+        if status == "error":
+            error = tool_result.get("error", "未知错误")
+            return ToolResultMessage(
+                tool_name=self.name,
+                content=f"搜索失败: {error}"
+            )
+        
+        total_results = tool_result.get("total_results", 0)
+        if total_results == 0:
+            return ToolResultMessage(
+                tool_name=self.name,
+                content="搜索完成，未找到结果"
+            )
+        else:
+            return ToolResultMessage(
+                tool_name=self.name,
+                content=f"搜索完成，找到{total_results}个结果"
+            )
     
     def _search_with_ddgs(
         self,

@@ -10,6 +10,7 @@ import aiohttp
 from bs4 import BeautifulSoup
 from utils.logger import Logger
 from tools.base_tool import MCPTool
+from model import ToolCallMessage, ToolResultMessage
 
 logger = Logger('fetch_url_tool', log_to_file=False)
 
@@ -50,6 +51,53 @@ class FetchUrlTool(MCPTool):
                 }
             }
         }
+    
+    def get_call_notification(self, tool_args: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """
+        Get custom notification for fetch URL tool call.
+        
+        Args:
+            tool_args: Tool arguments containing 'url'
+        
+        Returns:
+            Custom notification dictionary (can also return model instance)
+        """
+        url = tool_args.get("url", "")
+        # Truncate long URLs for display
+        display_url = url[:60] + "..." if len(url) > 60 else url
+        return ToolCallMessage(
+            tool_name=self.name,
+            content=f"正在获取网页内容: {display_url}"
+        )
+    
+    def get_result_notification(self, tool_result: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """
+        Get custom notification for fetch URL tool result.
+        
+        Args:
+            tool_result: Tool execution result
+        
+        Returns:
+            Custom notification dictionary (can also return model instance)
+        """
+        if "error" in tool_result:
+            error = tool_result.get("error", "未知错误")
+            return ToolResultMessage(
+                tool_name=self.name,
+                content=f"获取网页内容失败: {error}"
+            )
+        
+        length = tool_result.get("length", 0)
+        if length > 0:
+            return ToolResultMessage(
+                tool_name=self.name,
+                content=f"成功获取网页内容，共{length}个字符"
+            )
+        else:
+            return ToolResultMessage(
+                tool_name=self.name,
+                content="获取网页内容完成，但内容为空"
+            )
     
     async def execute(self, url: str, max_chars: int = 8000) -> Dict[str, Any]:
         """
