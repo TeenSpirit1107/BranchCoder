@@ -2,13 +2,10 @@
 """
 Workspace Structure Tool - Get file structure of the workspace
 """
-
-import os
 from typing import Dict, Any, Optional, List
 from pathlib import Path
 from utils.logger import Logger
 from tools.base_tool import MCPTool
-from model import ToolCallMessage, ToolResultMessage
 
 logger = Logger('workspace_structure_tool', log_to_file=False)
 
@@ -95,7 +92,7 @@ class WorkspaceStructureTool(MCPTool):
             }
         }
     
-    def get_call_notification(self, tool_args: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def get_call_notification(self, tool_args: Dict[str, Any]) -> Optional[str]:
         """
         Get custom notification for workspace structure tool call.
         
@@ -103,17 +100,14 @@ class WorkspaceStructureTool(MCPTool):
             tool_args: Tool arguments
         
         Returns:
-            Custom notification dictionary (can also return model instance)
+            Custom notification message string
         """
         max_depth = tool_args.get("max_depth", 5)
         include_files = tool_args.get("include_files", True)
         workspace_info = f"深度: {max_depth if max_depth > 0 else '无限制'}, 包含文件: {'是' if include_files else '否'}"
-        return ToolCallMessage(
-            tool_name=self.name,
-            content=f"正在获取工作区结构 ({workspace_info})"
-        )
+        return f"正在获取工作区结构 ({workspace_info})"
     
-    def get_result_notification(self, tool_result: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def get_result_notification(self, tool_result: Dict[str, Any]) -> Optional[str]:
         """
         Get custom notification for workspace structure tool result.
         
@@ -121,22 +115,14 @@ class WorkspaceStructureTool(MCPTool):
             tool_result: Tool execution result
         
         Returns:
-            Custom notification dictionary (can also return model instance)
+            Custom notification message string
         """
         success = tool_result.get("success", False)
         if not success:
             error = tool_result.get("error", "未知错误")
-            return ToolResultMessage(
-                tool_name=self.name,
-                content=f"获取工作区结构失败: {error}"
-            )
+            return f"获取工作区结构失败: {error}"
         
-        file_count = tool_result.get("file_count", 0)
-        directory_count = tool_result.get("directory_count", 0)
-        return ToolResultMessage(
-            tool_name=self.name,
-            content=f"成功获取工作区结构: {directory_count}个目录, {file_count}个文件"
-        )
+        return "工作区结构获取完成"
     
     def _should_ignore(self, path: Path, ignore_patterns: List[str], include_hidden: bool) -> bool:
         """

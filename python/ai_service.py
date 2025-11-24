@@ -1,37 +1,21 @@
-#!/usr/bin/env python3
-"""
-AI Service for VS Code Extension
-This script receives messages via stdin and returns AI responses via stdout.
-Acts as a simple entry point that receives frontend messages, combines them with history,
-and delegates to the flow module for processing.
-Logs are written to stderr to avoid interfering with JSON output on stdout.
-"""
-
 import json
 import sys
 import asyncio
-from typing import List, Dict, Any
+from typing import Dict, Any
 from dataclasses import asdict
 from utils.logger import Logger
 from utils.conversation_history import ConversationHistory
-from flow.flow_agent import FlowAgent
+from agents.flow import FlowAgent
 
-# Initialize logger (logs to stderr by default, no file logging)
-# To enable file logging, set log_to_file=True
 logger = Logger('ai_service', log_to_file=False)
 
 # Initialize conversation history manager
 history_manager = ConversationHistory()
 logger.info("Conversation history manager initialized")
 
-# Initialize flow agent
-try:
-    flow_agent = FlowAgent()
-    logger.info("Flow agent initialized successfully")
-except Exception as e:
-    logger.error(f"Failed to initialize flow agent: {e}", exc_info=True)
-    flow_agent = None
-
+# Global flow agent (lazy initialization on first request)
+flow_agent = None
+flow_agent_workspace_dir = None
 
 def _message_to_dict(message: Any) -> Dict[str, Any]:
     """
@@ -71,7 +55,22 @@ async def get_ai_response(message: str, session_id: str = "default", workspace_d
     """
     logger.debug(f"Processing AI request - message length: {len(message)}, session: {session_id}")
     
-    if not flow_agent:
+    if not workspace_dir:
+        raise ValueError("workspace_dir is required for FlowAgent initialization")
+    
+    global flow_agent, flow_agent_workspace_dir
+    
+    # Lazy initialization: create FlowAgent on first request or if workspace_dir changed
+    if flow_agent is None or flow_agent_workspace_dir != workspace_dir:
+        try:
+            flow_agent = FlowAgent(workspace_dir)
+            flow_agent_workspace_dir = workspace_dir
+            logger.info(f"Flow agent initialized successfully for workspace: {workspace_dir}")
+        except Exception as e:
+            logger.error(f"Failed to initialize flow agent: {e}", exc_info=True)
+            raise RuntimeError(f"Flow agent initialization failed: {e}")
+    
+    if flow_agent is None:
         raise RuntimeError("Flow agent is not initialized")
     
     try:
@@ -90,15 +89,15 @@ async def get_ai_response(message: str, session_id: str = "default", workspace_d
         final_message = None
         
         # Delegate to flow agent for processing (async generator)
-        async for msg in flow_agent.process(messages=messages, workspace_dir=workspace_dir):
+        async for msg in flow_agent.process(messages=messages):
             # Convert message to dict for JSON serialization
             msg_dict = _message_to_dict(msg)
             # Yield message to frontend
             yield msg_dict
             
             # Track final message
-            if msg_dict.get("type") == "message":
-                final_message = msg_dict.get("content", "")
+            if msg_dict.get("type") == "final_message":
+                final_message = msg_dict.get("message", "")
         
         # Save user message and assistant response to history
         history_manager.add_message("user", message, session_id)
@@ -109,7 +108,7 @@ async def get_ai_response(message: str, session_id: str = "default", workspace_d
     except Exception as e:
         logger.error(f"Error in get_ai_response: {e}", exc_info=True)
         # Yield error message
-        yield {"type": "message", "content": f"错误: {str(e)}"}
+        yield {"type": "final_message", "message": f"错误: {str(e)}"}
         raise
 
 async def async_main():
@@ -157,7 +156,7 @@ async def async_main():
     except Exception as e:
         logger.error(f"Error in async_main: {e}", exc_info=True)
         # Send error as streaming message
-        error_msg = {"type": "message", "content": f"错误: {str(e)}"}
+        error_msg = {"type": "final_message", "message": f"错误: {str(e)}"}
         print(json.dumps(error_msg, ensure_ascii=False), flush=True)
         sys.exit(1)
 

@@ -10,7 +10,6 @@ from typing import Dict, Any, Optional, Tuple
 from pathlib import Path
 from utils.logger import Logger
 from tools.base_tool import MCPTool
-from model import ToolCallMessage, ToolResultMessage
 
 logger = Logger('command_tool', log_to_file=False)
 
@@ -146,7 +145,7 @@ class CommandTool(MCPTool):
             }
         }
     
-    def get_call_notification(self, tool_args: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def get_call_notification(self, tool_args: Dict[str, Any]) -> Optional[str]:
         """
         Get custom notification for command tool call.
         
@@ -154,17 +153,14 @@ class CommandTool(MCPTool):
             tool_args: Tool arguments containing 'command'
         
         Returns:
-            Custom notification dictionary (can also return model instance)
+            Custom notification message string
         """
         command = tool_args.get("command", "")
         # Truncate long commands for display
         display_command = command[:50] + "..." if len(command) > 50 else command
-        return ToolCallMessage(
-            tool_name=self.name,
-            content=f"正在执行命令: {display_command}"
-        )
+        return f"正在执行命令: {display_command}"
     
-    def get_result_notification(self, tool_result: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def get_result_notification(self, tool_result: Dict[str, Any]) -> Optional[str]:
         """
         Get custom notification for command tool result.
         
@@ -172,23 +168,17 @@ class CommandTool(MCPTool):
             tool_result: Tool execution result
         
         Returns:
-            Custom notification dictionary (can also return model instance)
+            Custom notification message string
         """
         success = tool_result.get("success", False)
         command = tool_result.get("command", "")
         returncode = tool_result.get("returncode", -1)
         
         if success:
-            return ToolResultMessage(
-                tool_name=self.name,
-                content=f"命令执行成功 (返回码: {returncode})"
-            )
+            return f"命令执行成功 (返回码: {returncode})"
         else:
             error = tool_result.get("error", "未知错误")
-            return ToolResultMessage(
-                tool_name=self.name,
-                content=f"命令执行失败: {error}"
-            )
+            return f"命令执行失败: {error}"
     
     async def execute(self, command: str, timeout: int = 30) -> Dict[str, Any]:
         """

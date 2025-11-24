@@ -43,6 +43,41 @@ body {
     border: 1px solid var(--vscode-input-border);
 }
 
+/* Tool call message style */
+.message.tool-call {
+    background-color: var(--vscode-editor-lineHighlightBackground);
+    border: 1px solid var(--vscode-textLink-foreground);
+    border-left: 3px solid var(--vscode-textLink-foreground);
+}
+
+/* Tool result message style */
+.message.tool-result {
+    background-color: var(--vscode-editor-lineHighlightBackground);
+    border: 1px solid var(--vscode-textLink-foreground);
+    border-left: 3px solid #4ec9b0; /* Green accent for success */
+}
+
+/* Tool header (tool name display) */
+.tool-header {
+    margin-bottom: 8px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--vscode-panel-border);
+}
+
+.tool-header code {
+    background-color: var(--vscode-textCodeBlock-background);
+    color: var(--vscode-textLink-foreground);
+    padding: 0.2em 0.4em;
+    border-radius: 3px;
+    font-family: var(--vscode-editor-font-family);
+    font-size: 0.9em;
+    font-weight: normal;
+}
+
+.tool-message {
+    margin-top: 6px;
+}
+
 .message-content {
     line-height: 1.5;
     white-space: pre-wrap;

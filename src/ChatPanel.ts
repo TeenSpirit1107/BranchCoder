@@ -25,19 +25,11 @@ export class ChatPanel {
         this.chatHistory.push({ role: 'user', content: userMessage });
         this.update();
 
-        // Show loading indicator
-        this.webview.postMessage({
-            command: 'addMessage',
-            role: 'assistant',
-            content: '',
-            isLoading: true
-        });
-
         try {
-            // Call Python AI service
+            // Call Python AI service (events will be streamed and displayed automatically)
             const aiResponse = await this.callPythonAI(userMessage);
             
-            // Remove loading indicator and add actual response
+            // Add final response to history
             this.chatHistory.push({ role: 'assistant', content: aiResponse });
             this.update();
         } catch (error: any) {
@@ -142,8 +134,6 @@ export class ChatPanel {
             // Buffer for incomplete lines
             let buffer = '';
             let finalMessage = '';
-            let statusMessageId: string | null = null;
-            const generateMessageId = () => `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
             // Collect output line by line (streaming JSON)
             pythonProcess.stdout.on('data', (data: Buffer) => {
@@ -158,67 +148,15 @@ export class ChatPanel {
                     
                     try {
                         const msg = JSON.parse(line);
-                        const msgType = msg.type || 'message';
-                        const content = msg.content || '';
+                        // Directly pass the event to frontend, no transformation needed
+                        this.webview.postMessage({
+                            command: 'addEvent',
+                            event: msg
+                        });
 
-                        if (msgType === 'status') {
-                            // Update status message
-                            if (statusMessageId) {
-                                this.webview.postMessage({
-                                    command: 'updateMessage',
-                                    id: statusMessageId,
-                                    content: content,
-                                    isLoading: true
-                                });
-                            } else {
-                                statusMessageId = generateMessageId();
-                                this.webview.postMessage({
-                                    command: 'addMessage',
-                                    role: 'assistant',
-                                    id: statusMessageId,
-                                    content: content,
-                                    isLoading: true
-                                });
-                            }
-                        } else if (msgType === 'tool_call') {
-                            // Show tool call notification
-                            const toolName = msg.tool_name || 'unknown';
-                            this.webview.postMessage({
-                                command: 'addMessage',
-                                role: 'assistant',
-                                id: generateMessageId(),
-                                content: content,
-                                isLoading: true
-                            });
-                        } else if (msgType === 'tool_result') {
-                            // Show tool result
-                            this.webview.postMessage({
-                                command: 'addMessage',
-                                role: 'assistant',
-                                id: generateMessageId(),
-                                content: content,
-                                isLoading: false
-                            });
-                        } else if (msgType === 'message') {
-                            // Final message - replace loading indicator
-                            finalMessage = content;
-                            if (statusMessageId) {
-                                this.webview.postMessage({
-                                    command: 'updateMessage',
-                                    id: statusMessageId,
-                                    content: content,
-                                    isLoading: false
-                                });
-                                statusMessageId = null;
-                            } else {
-                                this.webview.postMessage({
-                                    command: 'addMessage',
-                                    role: 'assistant',
-                                    id: generateMessageId(),
-                                    content: content,
-                                    isLoading: false
-                                });
-                            }
+                        // Track final message for history
+                        if (msg.type === 'final_message') {
+                            finalMessage = msg.message || '';
                         }
                     } catch (e) {
                         // If JSON parsing fails, log but continue
@@ -246,8 +184,12 @@ export class ChatPanel {
                     if (buffer.trim()) {
                         try {
                             const msg = JSON.parse(buffer.trim());
-                            if (msg.type === 'message' && msg.content) {
-                                finalMessage = msg.content;
+                            this.webview.postMessage({
+                                command: 'addEvent',
+                                event: msg
+                            });
+                            if (msg.type === 'final_message' && msg.message) {
+                                finalMessage = msg.message;
                             }
                         } catch (e) {
                             // Ignore parse errors for remaining buffer
@@ -390,53 +332,52 @@ export class ChatPanel {
                         }
                     });
                     
-                    // Store message elements by ID for updates
-                    const messageElements = new Map();
-                    let lastMessageId = null;
-                    
                     // Handle messages from extension
                     window.addEventListener('message', event => {
-                        const message = event.data;
-                        switch (message.command) {
-                            case 'addMessage':
-                                const messageDiv = document.createElement('div');
-                                messageDiv.className = \`message \${message.role}\`;
-                                const messageId = message.id || ('msg_' + Date.now() + '_' + Math.random());
-                                messageDiv.setAttribute('data-message-id', messageId);
-                                const content = message.isLoading 
-                                    ? '<em>' + (message.content || 'Thinking...') + '</em>' 
-                                    : renderMarkdown(message.content || '');
-                                messageDiv.innerHTML = \`<div class="message-content">\${content}</div>\`;
-                                chatMessages.appendChild(messageDiv);
-                                messageElements.set(messageId, messageDiv);
-                                lastMessageId = messageId;
-                                scrollToBottom();
-                                break;
-                            case 'updateMessage':
-                                // Update existing message by ID
-                                const updateId = message.id || lastMessageId;
-                                if (updateId) {
-                                    const existingDiv = messageElements.get(updateId) || 
-                                        chatMessages.querySelector(\`[data-message-id="\${updateId}"]\`);
-                                    if (existingDiv) {
-                                        const updateContent = message.isLoading 
-                                            ? '<em>' + (message.content || 'Thinking...') + '</em>' 
-                                            : renderMarkdown(message.content || '');
-                                        const contentDiv = existingDiv.querySelector('.message-content');
-                                        if (contentDiv) {
-                                            contentDiv.innerHTML = updateContent;
-                                        }
-                                        scrollToBottom();
+                        const data = event.data;
+                        switch (data.command) {
+                            case 'addEvent':
+                                // Directly render backend event
+                                const evt = data.event;
+                                const msgDiv = document.createElement('div');
+                                let className = 'message assistant';
+                                
+                                // Add CSS class based on event type
+                                if (evt.type === 'tool_call') {
+                                    className += ' tool-call';
+                                } else if (evt.type === 'tool_result') {
+                                    className += ' tool-result';
+                                }
+                                
+                                msgDiv.className = className;
+                                
+                                // Build content based on event type
+                                let contentHtml = '';
+                                if (evt.type === 'tool_call' || evt.type === 'tool_result') {
+                                    const toolName = evt.tool_name || 'unknown';
+                                    const toolLabel = evt.type === 'tool_call' ? '🔧 调用工具' : '✅ 工具完成';
+                                    contentHtml = \`<div class="tool-header"><strong>\${toolLabel}:</strong> <code>\${toolName}</code></div>\`;
+                                    if (evt.message) {
+                                        contentHtml += \`<div class="tool-message">\${renderMarkdown(evt.message)}</div>\`;
+                                    }
+                                } else {
+                                    // Normal message (notification_message or final_message)
+                                    if (evt.type === 'notification_message') {
+                                        contentHtml = '<em>' + (evt.message || 'Thinking...') + '</em>';
+                                    } else {
+                                        contentHtml = renderMarkdown(evt.message || '');
                                     }
                                 }
+                                
+                                msgDiv.innerHTML = \`<div class="message-content">\${contentHtml}</div>\`;
+                                chatMessages.appendChild(msgDiv);
+                                scrollToBottom();
                                 break;
                             case 'focusInput':
                                 messageInput.focus();
                                 break;
                             case 'clearMessages':
                                 chatMessages.innerHTML = '';
-                                messageElements.clear();
-                                lastMessageId = null;
                                 break;
                         }
                     });

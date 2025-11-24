@@ -8,7 +8,6 @@ from typing import Dict, Any, Optional, List, Tuple
 from pathlib import Path
 from utils.logger import Logger
 from tools.base_tool import MCPTool
-from model import ToolCallMessage, ToolResultMessage
 
 logger = Logger('apply_patch_tool', log_to_file=False)
 
@@ -40,8 +39,8 @@ class ApplyPatchTool(MCPTool):
     
     @property
     def agent_tool(self) -> bool:
-        """This tool should not be exposed to LLM agent (used internally)."""
-        return False
+        """This tool should be exposed to LLM agent for applying patches."""
+        return True
     
     def get_tool_definition(self) -> Dict[str, Any]:
         """Get the tool definition for LLM function calling."""
@@ -49,7 +48,7 @@ class ApplyPatchTool(MCPTool):
             "type": "function",
             "function": {
                 "name": "apply_patch",
-                "description": "Apply unified diff patches to files in the workspace.",
+                "description": "Apply unified diff patches to files. Use this tool when you need to apply code changes to files. The target_file_path must be an absolute path (beginning with /).",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -57,9 +56,9 @@ class ApplyPatchTool(MCPTool):
                             "type": "string",
                             "description": "Patch content in unified diff format, or path to patch file"
                         },
-                        "target_file": {
+                        "target_file_path": {
                             "type": "string",
-                            "description": "target file path (ABS path)"
+                            "description": "Target file absolute path (begin with /, not with workspace_dir)"
                         },
                         "dry_run": {
                             "type": "boolean",
@@ -67,32 +66,30 @@ class ApplyPatchTool(MCPTool):
                             "default": False
                         }
                     },
-                    "required": ["patch_content", "target_file"]
+                    "required": ["patch_content", "target_file_path"]
                 }
             }
         }
     
-    def get_call_notification(self, tool_args: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def get_call_notification(self, tool_args: Dict[str, Any]) -> Optional[str]:
         """
         Get custom notification for apply patch tool call.
         
         Args:
-            tool_args: Tool arguments containing 'patch_content'
+            tool_args: Tool arguments containing 'patch_content' and 'target_file_path'
         
         Returns:
-            Custom notification dictionary
+            Custom notification message string
         """
         patch_content = tool_args.get("patch_content", "")
+        target_file_path = tool_args.get("target_file_path", "")
         dry_run = tool_args.get("dry_run", False)
         # Truncate long patch content for display
         display_content = patch_content[:50] + "..." if len(patch_content) > 50 else patch_content
         mode = "验证" if dry_run else "应用"
-        return ToolCallMessage(
-            tool_name=self.name,
-            content=f"正在{mode}补丁: {display_content}"
-        )
+        return f"正在{mode}补丁到 {target_file_path}: {display_content}"
     
-    def get_result_notification(self, tool_result: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def get_result_notification(self, tool_result: Dict[str, Any]) -> Optional[str]:
         """
         Get custom notification for apply patch tool result.
         
@@ -100,23 +97,17 @@ class ApplyPatchTool(MCPTool):
             tool_result: Tool execution result
         
         Returns:
-            Custom notification dictionary
+            Custom notification message string
         """
         success = tool_result.get("success", False)
         patches_applied = tool_result.get("patches_applied", 0)
         patches_total = tool_result.get("patches_total", 0)
         
         if success:
-            return ToolResultMessage(
-                tool_name=self.name,
-                content=f"补丁应用成功 ({patches_applied}/{patches_total})"
-            )
+            return f"补丁应用成功 ({patches_applied}/{patches_total})"
         else:
             error = tool_result.get("error", "未知错误")
-            return ToolResultMessage(
-                tool_name=self.name,
-                content=f"补丁应用失败: {error}"
-            )
+            return f"补丁应用失败: {error}"
     
     def _parse_patch(self, patch_content: str) -> List[Tuple[str, List[str], List[str]]]:
         """
@@ -139,8 +130,14 @@ class ApplyPatchTool(MCPTool):
                 # Remove timestamp if present (format: --- a/file.txt\t2024-01-01 12:00:00)
                 old_file = old_file.split('\t')[0].strip()
                 # Remove 'a/' or 'b/' prefix if present
+                # Note: If original path was absolute like /home/..., git diff shows it as a/home/...
+                # After removing a/, we need to restore the leading /
                 if old_file.startswith('a/') or old_file.startswith('b/'):
                     old_file = old_file[2:]
+                    # If the path doesn't start with / after removing a/ or b/,
+                    # it means the original path was absolute, so add / back
+                    if not old_file.startswith('/'):
+                        old_file = '/' + old_file
                 
                 i += 1
                 if i < len(lines) and lines[i].startswith('+++'):
@@ -148,6 +145,9 @@ class ApplyPatchTool(MCPTool):
                     new_file = new_file.split('\t')[0].strip()
                     if new_file.startswith('a/') or new_file.startswith('b/'):
                         new_file = new_file[2:]
+                        # Restore leading / for absolute paths
+                        if not new_file.startswith('/'):
+                            new_file = '/' + new_file
                     
                     # Use new_file as target, or old_file if new_file is /dev/null
                     target_file = new_file if new_file != '/dev/null' else old_file
@@ -358,13 +358,13 @@ class ApplyPatchTool(MCPTool):
                 "file_path": str(resolved_path)
             }
     
-    async def execute(self, patch_content: str, target_file: Optional[str] = None, dry_run: bool = False) -> Dict[str, Any]:
+    async def execute(self, patch_content: str, target_file_path: str, dry_run: bool = False) -> Dict[str, Any]:
         """
         Apply a patch to a file.
         
         Args:
             patch_content: Patch content in unified diff format, or path to patch file
-            target_file: Optional target file path (overrides patch header) - should be absolute path
+            target_file_path: Target file absolute path (required)
             dry_run: If True, only validate without applying
         
         Returns:
@@ -372,9 +372,16 @@ class ApplyPatchTool(MCPTool):
         """
         logger.info("=" * 80)
         logger.info(f"Execute apply_patch tool (dry_run={dry_run})")
-        if target_file:
-            logger.info(f"Target file override: {target_file}")
+        logger.info(f"Target file path: {target_file_path}")
         logger.info(f"Patch content length: {len(patch_content)} characters")
+        
+        # Validate target_file_path is absolute
+        if not os.path.isabs(target_file_path):
+            logger.error(f"target_file_path must be an absolute path, got: {target_file_path}")
+            return {
+                "success": False,
+                "error": f"target_file_path must be an absolute path, got: {target_file_path}"
+            }
         
         # Check if patch_content is a file path
         patch_text = patch_content
@@ -412,41 +419,35 @@ class ApplyPatchTool(MCPTool):
         
         # Log parsed patches
         for i, (file_path, old_lines, new_lines) in enumerate(patches, 1):
-            logger.info(f"Patch {i}: file={file_path}, old_lines={len(old_lines)}, new_lines={len(new_lines)}")
+            logger.info(f"Patch {i}: old_lines={len(old_lines)}, new_lines={len(new_lines)}")
         
-        # Apply each patch
-        logger.info("Applying patches...")
-        results = []
-        for i, (file_path, old_lines, new_lines) in enumerate(patches, 1):
-            # Use target_file if provided, otherwise use file_path from patch
-            # Both should be absolute paths
-            actual_target = target_file if target_file else file_path
-            logger.info(f"Processing patch {i}/{len(patches)}: {actual_target}")
-            
-            result = self._apply_patch_to_file(actual_target, old_lines, new_lines, dry_run)
-            results.append(result)
-            
-            if result.get("success"):
-                logger.info(f"Patch {i} applied successfully")
-            else:
-                logger.error(f"Patch {i} failed: {result.get('error', 'unknown error')}")
+        # Apply patch to target_file_path (use first patch's content, ignore file path from patch)
+        if len(patches) > 1:
+            logger.warning(f"Multiple patches found ({len(patches)}), but only one target_file_path provided. Using first patch content.")
         
-        # Return summary
-        success_count = sum(1 for r in results if r.get("success", False))
-        total_count = len(results)
+        # Use the first patch's content
+        _, old_lines, new_lines = patches[0]
         
-        logger.info(f"Patch application complete: {success_count}/{total_count} successful")
+        logger.info(f"Applying patch to: {target_file_path}")
+        result = self._apply_patch_to_file(target_file_path, old_lines, new_lines, dry_run)
+        
+        if result.get("success"):
+            logger.info("Patch applied successfully")
+        else:
+            logger.error(f"Patch failed: {result.get('error', 'unknown error')}")
+        
+        logger.info(f"Patch application complete: {'success' if result.get('success') else 'failed'}")
         logger.info("=" * 80)
         
         return_dict = {
-            "success": success_count == total_count,
-            "patches_applied": success_count,
-            "patches_total": total_count,
-            "results": results
+            "success": result.get("success", False),
+            "patches_applied": 1 if result.get("success") else 0,
+            "patches_total": 1,
+            "results": [result]
         }
         
-        # Include dry_run flag if any result has it
-        if dry_run or any(r.get("dry_run", False) for r in results):
+        # Include dry_run flag if result has it
+        if dry_run or result.get("dry_run", False):
             return_dict["dry_run"] = True
         
         return return_dict
