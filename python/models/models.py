@@ -19,9 +19,9 @@ class ToolResultEvent(BaseEvent):
     result: dict = None
 
 @dataclass
-class NotificationEvent(BaseEvent):
+class MessageEvent(BaseEvent):
     type: str = "notification_message"
 
 @dataclass
-class FinalEvent(BaseEvent):
+class ReportEvent(BaseEvent):
     type: str = "final_message"

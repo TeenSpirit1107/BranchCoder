@@ -2,8 +2,8 @@ from typing import List, Dict
 from utils.logger import Logger
 from llm.chat_llm import AsyncChatClientWrapper
 from tools.tool_factory import get_tool_definitions, set_workspace_dir, execute_tool
-from models import FinalEvent, NotificationEvent, ToolCallEvent, ToolResultEvent
-from flow.memory import Memory
+from models import ReportEvent, MessageEvent, ToolCallEvent, ToolResultEvent
+from agents.memory import Memory
 
 logger = Logger('flow', log_to_file=False)
 
@@ -27,7 +27,7 @@ class FlowAgent:
         while iteration < self.MAX_ITERATION:
             iteration += 1
             logger.debug(f"Flow iteration {iteration}")
-            yield NotificationEvent(message=f"Thinking... (Iteration: {iteration})")
+            yield MessageEvent(message=f"Thinking... (Iteration: {iteration})")
             result = await self.llm_client.ask(
                 messages=self.memory.get_messages(),
                 tools=self.tools_definitions,
@@ -43,12 +43,12 @@ class FlowAgent:
                     tool_name=tool_name,
                     tool_args=tool_args,
                 )):
-                    if isinstance(event, NotificationEvent):
+                    if isinstance(event, MessageEvent):
                         yield event
                     elif isinstance(event, ToolResultEvent):
                         yield event
                         tool_result = event.result
-                    elif isinstance(event, FinalEvent):
+                    elif isinstance(event, ReportEvent):
                         yield event
                         return
 
@@ -58,8 +58,8 @@ class FlowAgent:
                 self.memory.add_tool_call(iteration, tool_name, tool_args)
                 self.memory.add_tool_result(iteration, tool_result)
             else:
-                yield NotificationEvent(message=result.get("answer", ""))
+                yield MessageEvent(message=result.get("answer", ""))
 
         logger.warning(f"Reached max iterations ({self.MAX_ITERATION}), returning error message")
         error_message = "Sorry. Hit max iterations limit"
-        yield FinalEvent(message=error_message)
+        yield ReportEvent(message=error_message)

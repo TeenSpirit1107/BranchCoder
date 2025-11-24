@@ -7,15 +7,15 @@ from models.models import (
     BaseEvent,
     ToolCallEvent,
     ToolResultEvent,
-    FinalEvent,
-    NotificationEvent
+    ReportEvent,
+    MessageEvent
 )
 
 __all__ = [
     "BaseEvent",
     "ToolCallEvent",
     "ToolResultEvent",
-    "FinalEvent",
-    "NotificationEvent"
+    "ReportEvent",
+    "MessageEvent"
 ]
 
