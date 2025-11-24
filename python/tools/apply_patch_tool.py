@@ -4,6 +4,7 @@ Apply Patch Tool - Apply unified diff patches to files
 """
 
 import os
+import re
 from typing import Dict, Any, Optional, List, Tuple
 from pathlib import Path
 from utils.logger import Logger
@@ -180,7 +181,34 @@ class ApplyPatchTool(MCPTool):
                             break
                         
                         # Hunk header: @@ -start,count +start,count @@
+                        # Must match pattern: @@ -number,number +number,number @@
+                        # This prevents code lines starting with @@ from being misidentified
+                        # Pattern allows optional spaces but requires -digit and +digit patterns
+                        # More flexible: allows @@-1,5+1,5@@ or @@ -1,5 +1,5 @@ formats
+                        # Must have both - and + signs (though spaces are optional)
+                        is_hunk_header = False
                         if line.startswith('@@'):
+                            # Try strict pattern first
+                            hunk_header_pattern = r'^@@\s*-\d+(?:,\d+)?\s*\+\d+(?:,\d+)?\s*@@'
+                            is_hunk_header = bool(re.match(hunk_header_pattern, line))
+                            
+                            # Fallback: if line starts with @@ and contains both -digit and +digit patterns,
+                            # treat it as hunk header even if format is slightly off
+                            if not is_hunk_header:
+                                # Check if it has digit patterns after - and + (allowing for no spaces)
+                                if re.search(r'-\d+', line) and re.search(r'\+\d+', line):
+                                    is_hunk_header = True
+                                    logger.debug(f"Using fallback hunk header detection for: {line[:50]}")
+                            
+                            # Additional fallback: if it looks like a hunk header (starts with @@ and ends with @@)
+                            # and has some numeric content, treat it as hunk header
+                            if not is_hunk_header and line.strip().endswith('@@') and re.search(r'\d+', line):
+                                # Very permissive: if it starts with @@, ends with @@, and has numbers
+                                # This handles edge cases where format is non-standard
+                                is_hunk_header = True
+                                logger.debug(f"Using very permissive hunk header detection for: {line[:50]}")
+                        
+                        if is_hunk_header:
                             # If we were in a hunk, save it before starting new one
                             if in_hunk:
                                 all_old_lines.extend(hunk_old_lines)
@@ -191,6 +219,30 @@ class ApplyPatchTool(MCPTool):
                             in_hunk = True
                             i += 1
                             continue
+                        
+                        # If line starts with @@ but is not a valid hunk header
+                        if line.startswith('@@') and not is_hunk_header:
+                            if in_hunk:
+                                # If we're in a hunk and this line starts with @@ but is not a valid header,
+                                # it might be a new hunk header with non-standard format, or malformed content
+                                # End the current hunk and skip this line (treat as malformed)
+                                logger.warning(f"Found @@ line in hunk that is not a valid header, ending hunk: {line[:50]}")
+                                all_old_lines.extend(hunk_old_lines)
+                                all_new_lines.extend(hunk_new_lines)
+                                hunk_old_lines = []
+                                hunk_new_lines = []
+                                in_hunk = False
+                            # Skip this line whether in hunk or not
+                            i += 1
+                            continue
+                        
+                        # If we encounter patch content lines (space, -, +) but not in a hunk,
+                        # it might be a patch without hunk header (non-standard but possible)
+                        # Start processing anyway
+                        if not in_hunk and (line.startswith(' ') or line.startswith('-') or line.startswith('+')):
+                            logger.warning(f"Found patch content line without hunk header, starting hunk anyway: {line[:50]}")
+                            in_hunk = True
+                            # Don't increment i, process this line below
                         
                         if in_hunk:
                             if line.startswith(' '):

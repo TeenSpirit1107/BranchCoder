@@ -1,4 +1,8 @@
 {
   "workspace_dir": "/home/yf/workspace/course/deep_learning/assignment1/models",
-  "last_update_time": 1763133997.5454907
+  "last_update_time": 1763133997.5454907,
+  "pending_changed_files": [
+    "_base_network.py"
+  ],
+  "pending_deleted_files": []
 }

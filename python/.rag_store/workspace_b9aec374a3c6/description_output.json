@@ -5,12 +5,12 @@
       "description": "SoftmaxRegression: Defines a single-layer softmax regression classifier with no bias. It inherits from _baseNetwork to reuse common utilities for activations, loss calculation, accuracy, and gradient storage. The class initializes a weight matrix W1 and corresponding gradient buffers, seeding NumPy for reproducibility. The forward method supports both training and evaluation: it computes a linear projection, applies ReLU, then softmax, and derives cross-entropy loss and accuracy; in training mode it also backpropagates to compute and store gradients w.r.t. W1. It relies on NumPy and the base network module in the same package for core operations."
     },
     {
-      "file": "_base_network.py",
-      "description": "File-level summary This module defines a base neural network class using NumPy, intended to be extended by concrete models. It stores weights and gradients in dictionaries and provides a set of common utilities for neural networks, including softmax, cross-entropy loss, accuracy computation, and basic activation functions (sigmoid and ReLU) with their derivatives. The forward pass and weight initialization are left as placeholders for subclasses to implement. The implementation is self-contained, with no external dependencies beyond NumPy, and emphasizes numerical stability (e.g., softmax) and safe loss computation. The class interacts with training loops and layer-specific components via standardized interfaces and shared data structures (weights and gradients)."
-    },
-    {
       "file": "two_layer_nn.py",
       "description": "TwoLayerNet module implementing a simple two-layer neural network for classification. It extends a base network (_baseNetwork) to reuse utilities for activations, loss calculation, and accuracy metrics. The file handles deterministic weight initialization, forward computation (including loss, accuracy, and gradient generation), and backpropagation to populate gradients for W1, b1, W2, and b2. It relies on numpy for numeric operations and on methods provided by the base class such as sigmoid, sigmoid_dev, softmax, cross_entropy_loss, and compute_accuracy. This structure is designed to be used by training loops that update parameters via the stored gradients."
+    },
+    {
+      "file": "_base_network.py",
+      "description": "The file defines a base neural network class, _baseNetwork, intended to be extended by specific architectures. It uses NumPy for numerical operations and maintains dictionaries for weights and gradients. It provides common utility methods such as softmax, cross-entropy loss, accuracy computation, and common activation functions (sigmoid and ReLU) along with their derivatives. Some core methods like weight initialization and the forward pass are left as placeholders for subclasses to implement. The class tracks input size and number of classes, and includes a simple greeting helper for testing."
     }
   ],
   "functions": [
@@ -87,137 +87,6 @@
       ],
       "called_by": [],
       "description": "Performs the forward pass to compute loss and accuracy; in training mode, also computes gradients for W1 via backpropagation and stores them in self.gradients."
-    },
-    {
-      "file": "_base_network.py",
-      "qualname": "_base_network._baseNetwork.__init__",
-      "source": "    def __init__(self, input_size=28 * 28, num_classes=10):\n\n        self.input_size = input_size\n        self.num_classes = num_classes\n\n        self.weights = dict()\n        self.gradients = dict()\n",
-      "calls": [],
-      "called_by": [
-        "softmax_regression.SoftmaxRegression.__init__",
-        "softmax_regression.SoftmaxRegression._weight_init",
-        "softmax_regression.SoftmaxRegression.forward",
-        "two_layer_nn.TwoLayerNet.__init__",
-        "two_layer_nn.TwoLayerNet._weight_init",
-        "two_layer_nn.TwoLayerNet.forward"
-      ],
-      "description": "Initializes the SoftmaxRegression model by invoking the base class constructor and performing weight initialization."
-    },
-    {
-      "file": "_base_network.py",
-      "qualname": "_base_network._baseNetwork._weight_init",
-      "source": "    def _weight_init(self):\n        pass\n",
-      "calls": [],
-      "called_by": [
-        "softmax_regression.SoftmaxRegression.__init__",
-        "softmax_regression.SoftmaxRegression._weight_init",
-        "softmax_regression.SoftmaxRegression.forward",
-        "two_layer_nn.TwoLayerNet.__init__",
-        "two_layer_nn.TwoLayerNet._weight_init",
-        "two_layer_nn.TwoLayerNet.forward"
-      ],
-      "description": "Placeholder for weight initialization to be implemented by subclasses."
-    },
-    {
-      "file": "_base_network.py",
-      "qualname": "_base_network._baseNetwork.forward",
-      "source": "    def forward(self):\n        pass\n",
-      "calls": [],
-      "called_by": [],
-      "description": "Placeholder for the forward pass to be implemented by subclasses."
-    },
-    {
-      "file": "_base_network.py",
-      "qualname": "_base_network._baseNetwork.softmax",
-      "source": "    def softmax(self, scores):\n        '''\n        Compute softmax scores given the raw output from the model\n\n        :param scores: raw scores from the model (N, num_classes)\n        :return:\n            prob: softmax probabilities (N, num_classes)\n        '''\n        prob = None\n        #############################################################################\n        # TODO:                                                                     #\n        #    1) Calculate softmax scores of input images                            #\n        #############################################################################\n        # numerically stable softmax\n        shifted = scores - np.max(scores, axis=1, keepdims=True)\n        exp_scores = np.exp(shifted)\n        sums = np.sum(exp_scores, axis=1, keepdims=True)\n        prob = exp_scores / sums\n\n        #############################################################################\n        #                              END OF YOUR CODE                             #\n        #############################################################################\n        return prob\n",
-      "calls": [],
-      "called_by": [
-        "softmax_regression.SoftmaxRegression.__init__",
-        "softmax_regression.SoftmaxRegression._weight_init",
-        "softmax_regression.SoftmaxRegression.forward",
-        "two_layer_nn.TwoLayerNet.__init__",
-        "two_layer_nn.TwoLayerNet._weight_init",
-        "two_layer_nn.TwoLayerNet.forward"
-      ],
-      "description": "Computes numerically stable softmax probabilities from raw scores, returning (N, num_classes)."
-    },
-    {
-      "file": "_base_network.py",
-      "qualname": "_base_network._baseNetwork.cross_entropy_loss",
-      "source": "    def cross_entropy_loss(self, x_pred, y):\n        '''\n        Compute Cross-Entropy Loss based on prediction of the network and labels\n        :param x_pred: Probabilities from the model (N, num_classes)\n        :param y: Labels of instances in the batch\n        :return: The computed Cross-Entropy Loss\n        '''\n        loss = None\n        #############################################################################\n        # TODO:                                                                     #\n        #    1) Implement Cross-Entropy Loss                                        #\n        #############################################################################\n        # x_pred is probability distribution per row\n        N = x_pred.shape[0]\n        # avoid log(0)\n        eps = 1e-12\n        clipped = np.clip(x_pred, eps, 1.0)\n        correct_log_probs = -np.log(clipped[np.arange(N), y])\n        loss = np.mean(correct_log_probs)\n\n        #############################################################################\n        #                              END OF YOUR CODE                             #\n        #############################################################################\n        return loss\n",
-      "calls": [],
-      "called_by": [
-        "softmax_regression.SoftmaxRegression.__init__",
-        "softmax_regression.SoftmaxRegression._weight_init",
-        "softmax_regression.SoftmaxRegression.forward",
-        "two_layer_nn.TwoLayerNet.__init__",
-        "two_layer_nn.TwoLayerNet._weight_init",
-        "two_layer_nn.TwoLayerNet.forward"
-      ],
-      "description": "Computes mean cross-entropy loss given predicted probabilities and true labels, with clipping to avoid log(0)."
-    },
-    {
-      "file": "_base_network.py",
-      "qualname": "_base_network._baseNetwork.compute_accuracy",
-      "source": "    def compute_accuracy(self, x_pred, y):\n        '''\n        Compute the accuracy of current batch\n        :param x_pred: Probabilities from the model (N, num_classes)\n        :param y: Labels of instances in the batch\n        :return: The accuracy of the batch\n        '''\n        acc = None\n        #############################################################################\n        # TODO:                                                                     #\n        #    1) Implement the accuracy function                                     #\n        #############################################################################\n        preds = np.argmax(x_pred, axis=1)\n        acc = np.mean(preds == y)\n\n        #############################################################################\n        #                              END OF YOUR CODE                             #\n        #############################################################################\n        return acc\n",
-      "calls": [],
-      "called_by": [
-        "softmax_regression.SoftmaxRegression.__init__",
-        "softmax_regression.SoftmaxRegression._weight_init",
-        "softmax_regression.SoftmaxRegression.forward",
-        "two_layer_nn.TwoLayerNet.__init__",
-        "two_layer_nn.TwoLayerNet._weight_init",
-        "two_layer_nn.TwoLayerNet.forward"
-      ],
-      "description": "Computes accuracy by comparing predicted class indices to true labels."
-    },
-    {
-      "file": "_base_network.py",
-      "qualname": "_base_network._baseNetwork.sigmoid",
-      "source": "    def sigmoid(self, X):\n        '''\n        Compute the sigmoid activation for the input\n\n        :param X: the input data coming out from one layer of the model (N, layer size)\n        :return:\n            out: the value after the sigmoid activation is applied to the input (N, layer size)\n        '''\n        #############################################################################\n        # TODO: Comput the sigmoid activation on the input                          #\n        #############################################################################\n\n        out = 1.0 / (1.0 + np.exp(-X))\n\n        #############################################################################\n        #                              END OF YOUR CODE                             #\n        #############################################################################\n        return out\n",
-      "calls": [],
-      "called_by": [
-        "two_layer_nn.TwoLayerNet.__init__",
-        "two_layer_nn.TwoLayerNet._weight_init",
-        "two_layer_nn.TwoLayerNet.forward"
-      ],
-      "description": "Applies the sigmoid activation elementwise to the input and returns the result."
-    },
-    {
-      "file": "_base_network.py",
-      "qualname": "_base_network._baseNetwork.sigmoid_dev",
-      "source": "    def sigmoid_dev(self, x):\n        '''\n        The analytical derivative of sigmoid function at x\n        :param x: Input data\n        :return: The derivative of sigmoid function at x\n        '''\n        #############################################################################\n        # TODO:                                                                     #\n        #    1) Implement the derivative of Sigmoid function                        #\n        #############################################################################\n\n        s = 1.0 / (1.0 + np.exp(-x))\n        ds = s * (1.0 - s)\n\n        #############################################################################\n        #                              END OF YOUR CODE                             #\n        #############################################################################\n        return ds\n",
-      "calls": [],
-      "called_by": [
-        "two_layer_nn.TwoLayerNet.__init__",
-        "two_layer_nn.TwoLayerNet._weight_init",
-        "two_layer_nn.TwoLayerNet.forward"
-      ],
-      "description": "Computes the derivative of the sigmoid function for the given input."
-    },
-    {
-      "file": "_base_network.py",
-      "qualname": "_base_network._baseNetwork.ReLU",
-      "source": "    def ReLU(self, X):\n        '''\n        Compute the ReLU activation for the input\n\n        :param X: the input data coming out from one layer of the model (N, layer size)\n        :return:\n            out: the value after the ReLU activation is applied to the input (N, layer size)\n        '''\n        #############################################################################\n        # TODO: Comput the ReLU activation on the input                          #\n        #############################################################################\n\n        out = np.maximum(0, X)\n\n        #############################################################################\n        #                              END OF YOUR CODE                             #\n        #############################################################################\n        return out\n",
-      "calls": [],
-      "called_by": [
-        "softmax_regression.SoftmaxRegression.__init__",
-        "softmax_regression.SoftmaxRegression._weight_init",
-        "softmax_regression.SoftmaxRegression.forward"
-      ],
-      "description": "Applies the ReLU activation (max(0, x)) elementwise to the input."
-    },
-    {
-      "file": "_base_network.py",
-      "qualname": "_base_network._baseNetwork.ReLU_dev",
-      "source": "    def ReLU_dev(self,X):\n        '''\n        Compute the gradient ReLU activation for the input\n\n        :param X: the input data coming out from one layer of the model (N, layer size)\n        :return:\n            out: gradient of ReLU given input X\n        '''\n        #############################################################################\n        # TODO: Comput the gradient of ReLU activation                              #\n        #############################################################################\n\n        out = (X > 0).astype(float)\n\n        #############################################################################\n        #                              END OF YOUR CODE                             #\n        #############################################################################\n        return out\n",
-      "calls": [],
-      "called_by": [
-        "softmax_regression.SoftmaxRegression.__init__",
-        "softmax_regression.SoftmaxRegression._weight_init",
-        "softmax_regression.SoftmaxRegression.forward"
-      ],
-      "description": "Computes the derivative of ReLU, returning 1 for positive inputs and 0 otherwise."
     },
     {
       "file": "two_layer_nn.py",
