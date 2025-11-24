@@ -678,6 +678,20 @@ export function activate(context: vscode.ExtensionContext) {
                     afterUri,
                     `Patch Preview: ${relativePath}`
                 );
+
+                // Show accept/reject buttons after preview is shown
+                const action = await vscode.window.showInformationMessage(
+                    `Patch preview for ${relativePath} is ready. Do you want to apply it?`,
+                    { modal: false },
+                    'Accept',
+                    'Reject'
+                );
+
+                if (action === 'Accept') {
+                    await vscode.commands.executeCommand('aiChat.applyPatch', sessionId);
+                } else if (action === 'Reject') {
+                    await vscode.commands.executeCommand('aiChat.rejectPatch', sessionId);
+                }
             } catch (error: any) {
                 console.error('Error showing patch preview:', error);
                 vscode.window.showErrorMessage(`Failed to show patch preview: ${error.message}`);
@@ -731,14 +745,56 @@ export function activate(context: vscode.ExtensionContext) {
                 const success = await vscode.workspace.applyEdit(edit);
                 if (success) {
                     vscode.window.showInformationMessage('Patch applied successfully 🎉');
-                    // Optionally clean up session
-                    // patchSessions.delete(sessionId);
+                    // Clean up session after successful application
+                    patchSessions.delete(sessionId);
                 } else {
                     vscode.window.showErrorMessage('Failed to apply patch');
                 }
             } catch (error: any) {
                 console.error('Error applying patch:', error);
                 vscode.window.showErrorMessage(`Failed to apply patch: ${error.message}`);
+            }
+        })
+    );
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand('aiChat.rejectPatch', async (sessionId?: string) => {
+            try {
+                // If no sessionId provided, try to get from active editor
+                if (!sessionId) {
+                    const activeEditor = vscode.window.activeTextEditor;
+                    if (!activeEditor) {
+                        vscode.window.showInformationMessage('Patch rejected. Preview window will remain open for review.');
+                        return;
+                    }
+
+                    // Find session by targetUri
+                    const activeUri = activeEditor.document.uri;
+                    for (const [id, session] of patchSessions.entries()) {
+                        if (session.targetUri.fsPath === activeUri.fsPath) {
+                            sessionId = id;
+                            break;
+                        }
+                    }
+
+                    if (!sessionId) {
+                        vscode.window.showInformationMessage('Patch rejected. Preview window will remain open for review.');
+                        return;
+                    }
+                }
+
+                const session = patchSessions.get(sessionId);
+                if (session) {
+                    const relativePath = vscode.workspace.asRelativePath(session.targetUri, false);
+                    vscode.window.showInformationMessage(`Patch rejected for ${relativePath}. Changes will not be applied.`);
+                    // Clean up session
+                    patchSessions.delete(sessionId);
+                } else {
+                    vscode.window.showInformationMessage('Patch rejected. Changes will not be applied.');
+                }
+            } catch (error: any) {
+                console.error('Error rejecting patch:', error);
+                vscode.window.showInformationMessage('Patch rejected.');
             }
         })
     );

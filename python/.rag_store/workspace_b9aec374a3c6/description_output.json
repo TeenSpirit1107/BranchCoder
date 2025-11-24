@@ -10,7 +10,7 @@
     },
     {
       "file": "_base_network.py",
-      "description": "The _base_network.py module defines a minimal base neural network class, primarily serving as a collection of common utilities and a lightweight scaffolding for more specialized networks. It imports numpy and exposes configuration (input_size, num_classes) along with dictionaries to hold weights and gradients. The class provides implementations for several standard activations (sigmoid, ReLU and their derivatives) and evaluation utilities (softmax, cross-entropy loss, accuracy) that can be reused by subclasses. Two placeholder methods (_weight_init and forward) are included for subclasses to implement concrete weight initialization and forward-pass logic. The module is designed to be extended by concrete network implementations and to support training workflows via numpy-based computations."
+      "description": "File-level summary This file defines a base class for neural networks, focusing on common utilities rather than a complete model. It exposes basic configuration (input_size and number of classes) and stores parameter and gradient dictionaries for potential subclasses. The class provides implementations for several activation functions (sigmoid, ReLU) and their derivatives, as well as core learning utilities like softmax, cross-entropy loss, and accuracy computation. It is designed to be extended by concrete network implementations, and relies solely on NumPy (no external non-standard dependencies). The methods operate on standard (N, D) shaped inputs and (N,) labels, and include numerical stabilization where appropriate."
     }
   ],
   "functions": [
@@ -175,7 +175,7 @@
         "two_layer_nn.TwoLayerNet._weight_init",
         "two_layer_nn.TwoLayerNet.forward"
       ],
-      "description": "Initialize the base network with input_size and num_classes and set up empty dictionaries for weights and gradients; prepares the object for subclassing. No return value."
+      "description": "Initialize the base network with default input size and number of classes; store input_size, num_classes, and initialize empty dictionaries for weights and gradients."
     },
     {
       "file": "_base_network.py",
@@ -190,7 +190,7 @@
         "two_layer_nn.TwoLayerNet._weight_init",
         "two_layer_nn.TwoLayerNet.forward"
       ],
-      "description": "Placeholder for weight initialization; intended to populate self.weights. No return value."
+      "description": "Placeholder for weight initialization; currently no implementation and intended to be overridden by subclasses."
     },
     {
       "file": "_base_network.py",
@@ -198,7 +198,7 @@
       "source": "    def forward(self):\n        pass\n",
       "calls": [],
       "called_by": [],
-      "description": "Placeholder for forward-pass logic to be implemented by subclasses. No return value."
+      "description": "Placeholder for forward-pass logic; intended to be implemented by subclasses."
     },
     {
       "file": "_base_network.py",
@@ -213,7 +213,7 @@
         "two_layer_nn.TwoLayerNet._weight_init",
         "two_layer_nn.TwoLayerNet.forward"
       ],
-      "description": "Compute row-wise softmax on the input scores to produce probabilities; returns an (N, num_classes) matrix. No side effects beyond returning the probabilities."
+      "description": "Compute numerically stable softmax probabilities from raw scores (N, num_classes); returns (N, num_classes)."
     },
     {
       "file": "_base_network.py",
@@ -228,7 +228,7 @@
         "two_layer_nn.TwoLayerNet._weight_init",
         "two_layer_nn.TwoLayerNet.forward"
       ],
-      "description": "Compute mean cross-entropy loss from predicted probabilities and true labels; returns a scalar loss value. No side effects besides returning the loss."
+      "description": "Compute mean cross-entropy loss from predicted probabilities (N, num_classes) and true labels y (length N); clips probabilities to avoid log(0)."
     },
     {
       "file": "_base_network.py",
@@ -243,7 +243,7 @@
         "two_layer_nn.TwoLayerNet._weight_init",
         "two_layer_nn.TwoLayerNet.forward"
       ],
-      "description": "Compute accuracy by comparing predicted class indices (argmax over classes) with true labels; returns a scalar accuracy. No side effects beyond returning the accuracy."
+      "description": "Compute accuracy by comparing predicted class indices (argmax over classes) to true labels y; returns a scalar accuracy."
     },
     {
       "file": "_base_network.py",
@@ -255,7 +255,7 @@
         "two_layer_nn.TwoLayerNet._weight_init",
         "two_layer_nn.TwoLayerNet.forward"
       ],
-      "description": "Apply the sigmoid activation to the input X; returns an array of the same shape as X. No side effects."
+      "description": "Apply element-wise sigmoid activation to input X (N, layer size); returns (N, layer size)."
     },
     {
       "file": "_base_network.py",
@@ -267,7 +267,7 @@
         "two_layer_nn.TwoLayerNet._weight_init",
         "two_layer_nn.TwoLayerNet.forward"
       ],
-      "description": "Compute the derivative of the sigmoid function with respect to input x; returns an array of the same shape as x. No side effects."
+      "description": "Compute the derivative of the sigmoid function for input x; returns ds = s * (1 - s) where s = sigmoid(x)."
     },
     {
       "file": "_base_network.py",
@@ -279,7 +279,7 @@
         "softmax_regression.SoftmaxRegression._weight_init",
         "softmax_regression.SoftmaxRegression.forward"
       ],
-      "description": "Apply the ReLU activation to the input X; returns an array of the same shape as X. No side effects."
+      "description": "Apply ReLU activation to input X (N, layer size); returns (N, layer size)."
     },
     {
       "file": "_base_network.py",
@@ -291,7 +291,7 @@
         "softmax_regression.SoftmaxRegression._weight_init",
         "softmax_regression.SoftmaxRegression.forward"
       ],
-      "description": "Compute the derivative of ReLU with respect to input X; returns 1.0 where X > 0 and 0.0 otherwise. No side effects."
+      "description": "Compute the gradient of ReLU with respect to input X; returns 1.0 where X > 0, else 0."
     }
   ],
   "classes": [
