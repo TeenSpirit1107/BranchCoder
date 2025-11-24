@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Test suite for SendMessageTool
+Test suite for SendReportTool
 Tests message sending functionality.
 """
 
@@ -11,16 +11,16 @@ from pathlib import Path
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from tools.send_message_tool import SendMessageTool
+from tools.send_report_tool import SendReportTool
 
 
 async def test_send_message_tool():
-    """Run comprehensive tests for SendMessageTool."""
+    """Run comprehensive tests for SendReportTool."""
     print("=" * 80)
-    print("SendMessageTool Test Suite")
+    print("SendReportTool Test Suite")
     print("=" * 80)
     
-    tool = SendMessageTool()
+    tool = SendReportTool()
     passed = 0
     failed = 0
     
@@ -102,7 +102,7 @@ async def test_send_message_tool():
     try:
         definition = tool.get_tool_definition()
         assert definition["type"] == "function", "Should be function type"
-        assert definition["function"]["name"] == "send_message", "Name should match"
+        assert definition["function"]["name"] == "send_report", "Name should match"
         assert "parameters" in definition["function"], "Should have parameters"
         assert "message" in definition["function"]["parameters"]["properties"], "Should have message parameter"
         print(f"  ✓ Tool name: {definition['function']['name']}")
@@ -118,7 +118,7 @@ async def test_send_message_tool():
         call_notif = tool.get_call_notification({"message": "test"})
         result_notif = tool.get_result_notification({"success": True, "message": "test"})
         
-        # SendMessageTool should return None for notifications (it's the final message)
+        # SendReportTool should return None for notifications (it's the final message)
         assert call_notif is None, "Call notification should be None"
         assert result_notif is None, "Result notification should be None"
         print(f"  ✓ Notification methods return None (as expected)")

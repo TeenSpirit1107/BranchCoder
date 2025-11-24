@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Send Message Tool - Send final message to user
+Send Report Tool - Send final report to user
 """
 
 from typing import Dict, Any, Optional
@@ -8,16 +8,16 @@ from utils.logger import Logger
 from tools.base_tool import MCPTool
 from models import ToolCallEvent, ToolResultEvent
 
-logger = Logger('send_message_tool', log_to_file=False)
+logger = Logger('send_report_tool', log_to_file=False)
 
 
-class SendMessageTool(MCPTool):
+class SendReportTool(MCPTool):
     """Tool for sending final messages to the user."""
     
     @property
     def name(self) -> str:
         """Tool name."""
-        return "send_message"
+        return "send_report"
     
     @property
     def agent_tool(self) -> bool:
@@ -29,7 +29,7 @@ class SendMessageTool(MCPTool):
         return {
             "type": "function",
             "function": {
-                "name": "send_message",
+                "name": "send_report",
                 "description": "Send a final message to the user. Use this tool when you want to provide your final response, explanation, summary, or any message to the user. This should be called when you have completed your task and want to communicate the result to the user.",
                 "parameters": {
                     "type": "object",

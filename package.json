@@ -49,6 +49,17 @@
         "command": "aiChat.clearChat",
         "title": "Clear Chat",
         "icon": "$(clear-all)"
+      },
+      {
+        "command": "aiChat.showPatchPreview",
+        "title": "Show Patch Preview",
+        "category": "AI Chat"
+      },
+      {
+        "command": "aiChat.applyPatch",
+        "title": "Apply Patch",
+        "category": "AI Chat",
+        "icon": "$(check)"
       }
     ],
     "menus": {

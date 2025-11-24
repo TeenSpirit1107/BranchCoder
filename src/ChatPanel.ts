@@ -3,6 +3,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { spawn } from 'child_process';
 import { marked } from 'marked';
+import { applyPatchToText } from './patchUtils';
 
 export class ChatPanel {
     private chatHistory: Array<{ role: string; content: string }> = [];
@@ -49,6 +50,65 @@ export class ChatPanel {
 
     public dispose() {
         // Cleanup if needed
+    }
+
+    private async handleApplyPatchToolCall(msg: any): Promise<void> {
+        try {
+            const toolArgs = msg.tool_args || {};
+            const patchContent = toolArgs.patch_content;
+            const targetFilePath = toolArgs.target_file_path;
+
+            if (!patchContent || !targetFilePath) {
+                console.warn('apply_patch tool_call missing required parameters');
+                return;
+            }
+
+            // Resolve target file URI
+            let targetUri: vscode.Uri;
+            if (path.isAbsolute(targetFilePath)) {
+                targetUri = vscode.Uri.file(targetFilePath);
+            } else {
+                // Relative path - resolve from workspace
+                const workspaceFolders = vscode.workspace.workspaceFolders;
+                if (!workspaceFolders || workspaceFolders.length === 0) {
+                    throw new Error('No workspace folder found');
+                }
+                const workspaceDir = workspaceFolders[0].uri.fsPath;
+                targetUri = vscode.Uri.file(path.join(workspaceDir, targetFilePath));
+            }
+
+            // Read current file content as beforeText
+            let beforeText: string;
+            try {
+                const doc = await vscode.workspace.openTextDocument(targetUri);
+                beforeText = doc.getText();
+            } catch (error: any) {
+                // File might not exist yet - use empty string
+                if (error.code === 'ENOENT' || error.message.includes('not found')) {
+                    beforeText = '';
+                } else {
+                    throw error;
+                }
+            }
+
+            // Apply patch to generate afterText
+            const afterText = applyPatchToText(beforeText, patchContent, targetFilePath);
+
+            // Show patch preview
+            await vscode.commands.executeCommand(
+                'aiChat.showPatchPreview',
+                targetUri,
+                beforeText,
+                afterText,
+                patchContent
+            );
+        } catch (error: any) {
+            console.error('Error handling apply_patch tool_call:', error);
+            if (this.outputChannel) {
+                this.outputChannel.appendLine(`[ERROR] Failed to handle apply_patch: ${error.message}`);
+            }
+            vscode.window.showErrorMessage(`Failed to show patch preview: ${error.message}`);
+        }
     }
 
     private async callPythonAI(message: string): Promise<string> {
@@ -153,6 +213,16 @@ export class ChatPanel {
                             command: 'addEvent',
                             event: msg
                         });
+
+                        // Handle apply_patch tool_call - show preview
+                        if (msg.type === 'tool_call' && msg.tool_name === 'apply_patch') {
+                            this.handleApplyPatchToolCall(msg).catch(error => {
+                                console.error('Error handling apply_patch tool_call:', error);
+                                if (this.outputChannel) {
+                                    this.outputChannel.appendLine(`[ERROR] Failed to handle apply_patch: ${error.message}`);
+                                }
+                            });
+                        }
 
                         // Track final message for history
                         if (msg.type === 'final_message') {

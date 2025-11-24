@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any, AsyncGenerator
 from utils.logger import Logger
 from tools.base_tool import MCPTool
-from models import ToolCallEvent, ToolResultEvent, BaseEvent
+from models import ToolCallEvent, ToolResultEvent, ReportEvent, BaseEvent
 
 logger = Logger('tool_factory', log_to_file=False)
 
@@ -165,6 +165,12 @@ async def execute_tool(tool_call_event: ToolCallEvent) -> AsyncGenerator[BaseEve
     try:
         logger.info(f"Executing tool: {tool_name} with args: {tool_args}")
         result = await tool.execute(**tool_args)
+        
+        if tool_name == "send_report":
+            message = result.get("message", "")
+            yield ReportEvent(message=message)
+            return
+        
         result_notification = tool.get_result_notification(result)
         if result_notification:
             yield ToolResultEvent(

@@ -4,6 +4,8 @@ import * as fs from 'fs';
 import { spawn } from 'child_process';
 import { ChatPanel } from './ChatPanel';
 import { createSnapshot, loadSnapshot, saveSnapshot, compareSnapshots, Snapshot } from './snapshot';
+import { PatchPreviewProvider, patchSessions } from './patchPreview';
+import { applyPatchToText, computeTextEdits } from './patchUtils';
 
 let chatPanel: ChatPanel | undefined;
 let ragInitializationInProgress = false;
@@ -612,6 +614,12 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.window.showErrorMessage(`AI Chat Extension failed to activate: ${error}`);
     }
 
+    // Register PatchPreviewProvider
+    const patchPreviewProvider = new PatchPreviewProvider();
+    context.subscriptions.push(
+        vscode.workspace.registerTextDocumentContentProvider('patch-preview', patchPreviewProvider)
+    );
+
     // Register commands
     context.subscriptions.push(
         vscode.commands.registerCommand('aiChat.openChat', async () => {
@@ -640,6 +648,98 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(
         vscode.commands.registerCommand('aiChat.clearChat', () => {
             provider.clearChat();
+        })
+    );
+
+    // Register patch preview commands
+    context.subscriptions.push(
+        vscode.commands.registerCommand('aiChat.showPatchPreview', async (
+            targetUri: vscode.Uri,
+            beforeText: string,
+            afterText: string,
+            patchContent?: string
+        ) => {
+            try {
+                const sessionId = String(Date.now());
+                patchSessions.set(sessionId, {
+                    beforeText,
+                    afterText,
+                    targetUri,
+                    patchContent
+                });
+
+                const beforeUri = vscode.Uri.parse(`patch-preview:/${sessionId}?state=before`);
+                const afterUri = vscode.Uri.parse(`patch-preview:/${sessionId}?state=after`);
+
+                const relativePath = vscode.workspace.asRelativePath(targetUri, false);
+                await vscode.commands.executeCommand(
+                    'vscode.diff',
+                    beforeUri,
+                    afterUri,
+                    `Patch Preview: ${relativePath}`
+                );
+            } catch (error: any) {
+                console.error('Error showing patch preview:', error);
+                vscode.window.showErrorMessage(`Failed to show patch preview: ${error.message}`);
+            }
+        })
+    );
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand('aiChat.applyPatch', async (sessionId?: string) => {
+            try {
+                // If no sessionId provided, try to get from active editor
+                if (!sessionId) {
+                    const activeEditor = vscode.window.activeTextEditor;
+                    if (!activeEditor) {
+                        vscode.window.showErrorMessage('No active editor found. Please provide a session ID.');
+                        return;
+                    }
+
+                    // Find session by targetUri
+                    const activeUri = activeEditor.document.uri;
+                    for (const [id, session] of patchSessions.entries()) {
+                        if (session.targetUri.fsPath === activeUri.fsPath) {
+                            sessionId = id;
+                            break;
+                        }
+                    }
+
+                    if (!sessionId) {
+                        vscode.window.showErrorMessage('No patch session found for current file.');
+                        return;
+                    }
+                }
+
+                const session = patchSessions.get(sessionId);
+                if (!session) {
+                    vscode.window.showErrorMessage(`No patch session found for id: ${sessionId}`);
+                    return;
+                }
+
+                // Read current file content
+                const doc = await vscode.workspace.openTextDocument(session.targetUri);
+                const currentText = doc.getText();
+
+                // Compute text edits from current text to afterText
+                const edits = computeTextEdits(currentText, session.afterText);
+
+                // Apply edits
+                const edit = new vscode.WorkspaceEdit();
+                edit.set(session.targetUri, edits);
+
+                const success = await vscode.workspace.applyEdit(edit);
+                if (success) {
+                    vscode.window.showInformationMessage('Patch applied successfully 🎉');
+                    // Optionally clean up session
+                    // patchSessions.delete(sessionId);
+                } else {
+                    vscode.window.showErrorMessage('Failed to apply patch');
+                }
+            } catch (error: any) {
+                console.error('Error applying patch:', error);
+                vscode.window.showErrorMessage(`Failed to apply patch: ${error.message}`);
+            }
         })
     );
 }

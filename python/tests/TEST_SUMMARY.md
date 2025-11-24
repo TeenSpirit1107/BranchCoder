@@ -10,7 +10,7 @@
 | CommandTool | `test_command_tool.py` | ✅ 已修复（添加 workspace_dir） |
 | FetchUrlTool | `test_fetch_url_tool.py` | ✅ 有测试 |
 | LintTool | `test_lint_tool.py` | ✅ 有测试 |
-| SendMessageTool | `test_send_message_tool.py` | ✅ 新创建 |
+| SendReportTool | `test_send_message_tool.py` | ✅ 新创建 |
 | WebSearchTool | `test_web_search_tool.py` | ✅ 有测试 |
 | WorkspaceRAGTool | `test_workspace_rag_tool.py` | ✅ 有测试 |
 | WorkspaceStructureTool | `test_workspace_structure_tool.py` | ✅ 有测试 |
@@ -28,7 +28,7 @@
 - ✅ 6 passed, 0 failed
 - 修复：所有测试现在都正确设置 workspace_dir
 
-#### SendMessageTool (新创建)
+#### SendReportTool (新创建)
 - ✅ 8 passed, 0 failed
 - 测试覆盖：基本消息、空消息、长消息、特殊字符、多行消息、工具定义、通知方法、agent_tool 属性
 
