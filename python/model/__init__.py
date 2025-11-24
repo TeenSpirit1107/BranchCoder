@@ -3,19 +3,19 @@
 Model definitions for flow agent messages
 """
 
-from model.message_models import (
-    FlowMessage,
-    StatusMessage,
-    ToolCallMessage,
-    ToolResultMessage,
-    FinalMessage
+from model.models import (
+    BaseEvent,
+    ToolCallEvent,
+    ToolResultEvent,
+    FinalEvent,
+    NotificationEvent
 )
 
 __all__ = [
-    "FlowMessage",
-    "StatusMessage",
-    "ToolCallMessage",
-    "ToolResultMessage",
-    "FinalMessage",
+    "BaseEvent",
+    "ToolCallEvent",
+    "ToolResultEvent",
+    "FinalEvent",
+    "NotificationEvent"
 ]
 

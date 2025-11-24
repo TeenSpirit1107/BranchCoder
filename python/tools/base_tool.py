@@ -35,7 +35,7 @@ class MCPTool(ABC):
             Tool name string
         """
         pass
-    
+
     @abstractmethod
     def get_tool_definition(self) -> Dict[str, Any]:
         """
@@ -66,52 +66,13 @@ class MCPTool(ABC):
         """
         pass
 
-    @abstractmethod
-    def get_call_notification(self, tool_args: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """
-        Get notification to display when tool is called.
-        Override this method to provide custom notification for tool calls.
-        
-        Args:
-            tool_args: The arguments passed to the tool
-        
-        Returns:
-            Optional dictionary or message model instance (e.g., ToolCallMessage):
-            - type: "tool_call"
-            - tool_name: tool name
-            - content: notification message
-            Can return a dict or a message model instance (e.g., ToolCallMessage).
-            The caller will handle conversion to dict for serialization.
-            If None is returned, flow_agent will use default notification.
-        """
+    def get_call_notification(self, tool_args: Dict[str, Any]) -> Optional[str]:
         return None
 
 
-    @abstractmethod
-    def get_result_notification(self, tool_result: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """
-        Get notification to display when tool execution completes.
-        Override this method to provide custom notification for tool results.
-        
-        Args:
-            tool_result: The result dictionary from tool execution
-        
-        Returns:
-            Optional dictionary or message model instance (e.g., ToolResultMessage):
-            - type: "tool_result"
-            - tool_name: tool name
-            - content: notification message
-            Can return a dict or a message model instance (e.g., ToolResultMessage).
-            The caller will handle conversion to dict for serialization.
-            If None is returned, flow_agent will use default notification.
-        """
+    def get_result_notification(self, tool_result: Dict[str, Any]) -> Optional[str]:
         return None
+
 
     def get_name(self) -> str:
-        """
-        Get tool name (convenience method).
-        
-        Returns:
-            Tool name
-        """
         return self.name

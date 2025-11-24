@@ -1,18 +1,13 @@
-#!/usr/bin/env python3
-"""
-Tool Registration Module
-Automatically discovers and registers all MCP tools in the tools directory.
-"""
-
 import importlib
 import inspect
 import pkgutil
 from pathlib import Path
-from typing import Dict, List, Type, Optional, Any
+from typing import Dict, List, Optional, Any, AsyncGenerator
 from utils.logger import Logger
 from tools.base_tool import MCPTool
+from model import ToolCallEvent, ToolResultEvent, BaseEvent
 
-logger = Logger('tool_register', log_to_file=False)
+logger = Logger('tool_factory', log_to_file=False)
 
 # Global tool registry
 _tool_registry: Dict[str, MCPTool] = {}
@@ -120,36 +115,10 @@ def register_tools(tools_directory: Optional[str] = None) -> Dict[str, MCPTool]:
 
 
 def get_tool(tool_name: str) -> Optional[MCPTool]:
-    """
-    Get a registered tool by name.
-    
-    Args:
-        tool_name: Name of the tool
-    
-    Returns:
-        Tool instance or None if not found
-    """
     return _tool_registry.get(tool_name)
 
 
-def get_all_tools() -> Dict[str, MCPTool]:
-    """
-    Get all registered tools.
-    
-    Returns:
-        Dictionary mapping tool names to tool instances
-    """
-    return _tool_registry.copy()
-
-
 def get_tool_definitions() -> List[Dict[str, Any]]:
-    """
-    Get tool definitions for all registered tools that are agent_tools (for LLM function calling).
-    Only tools with agent_tool=True will be included.
-    
-    Returns:
-        List of tool definition dictionaries for agent tools only
-    """
     return [
         tool.get_tool_definition() 
         for tool in _tool_registry.values() 
@@ -157,57 +126,65 @@ def get_tool_definitions() -> List[Dict[str, Any]]:
     ]
 
 
-def execute_tool(tool_name: str, **kwargs) -> Dict[str, Any]:
-    """
-    Execute a registered tool by name (synchronous wrapper).
-    Note: This creates a new event loop. For async contexts, use execute_tool_async instead.
+def set_workspace_dir(workspace_dir: str) -> None:
+    if not workspace_dir:
+        logger.warning("set_workspace_dir called with empty workspace_dir")
+        return
     
-    Args:
-        tool_name: Name of the tool to execute
-        **kwargs: Arguments to pass to the tool
+    logger.info(f"Setting workspace directory for all tools: {workspace_dir}")
     
-    Returns:
-        Tool execution result
-    """
+    for tool_name, tool in _tool_registry.items():
+        if hasattr(tool, 'set_workspace_dir'):
+            try:
+                tool.set_workspace_dir(workspace_dir)
+                logger.debug(f"Set workspace directory for tool: {tool_name}")
+            except Exception as e:
+                logger.error(f"Failed to set workspace directory for tool {tool_name}: {e}", exc_info=True)
+
+
+async def execute_tool(tool_call_event: ToolCallEvent) -> AsyncGenerator[BaseEvent, None]:
+    tool_name = tool_call_event.tool_name
+    tool_args = tool_call_event.tool_args or {}
+
     tool = get_tool(tool_name)
     if tool is None:
-        return {"error": f"Tool not found: {tool_name}"}
-    
-    import asyncio
+        error_msg = f"Tool not found: {tool_name}"
+        logger.error(error_msg)
+        yield ToolResultEvent(
+            message=error_msg,
+            tool_name=tool_name,
+            result={"error": error_msg}
+        )
+        return
+
+    call_notification = tool.get_call_notification(tool_args)
+    if call_notification:
+        tool_call_event.message = call_notification
+
     try:
-        # Check if we're in an async context
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            # If loop is running, we can't use run() - need to use async version
-            raise RuntimeError(
-                "Cannot execute tool synchronously when event loop is running. "
-                "Use execute_tool_async() instead."
+        logger.info(f"Executing tool: {tool_name} with args: {tool_args}")
+        result = await tool.execute(**tool_args)
+        result_notification = tool.get_result_notification(result)
+        if result_notification:
+            yield ToolResultEvent(
+                message=result_notification,
+                tool_name=tool_name,
+                result=result
             )
         else:
-            return loop.run_until_complete(tool.execute(**kwargs))
-    except RuntimeError:
-        # No event loop, create one
-        return asyncio.run(tool.execute(**kwargs))
-
-
-async def execute_tool_async(tool_name: str, **kwargs) -> Dict[str, Any]:
-    """
-    Execute a registered tool by name (async version).
-    
-    Args:
-        tool_name: Name of the tool to execute
-        **kwargs: Arguments to pass to the tool
-    
-    Returns:
-        Tool execution result
-    """
-    tool = get_tool(tool_name)
-    if tool is None:
-        return {"error": f"Tool not found: {tool_name}"}
-    
-    return await tool.execute(**kwargs)
-
+            yield ToolResultEvent(
+                message=f'{tool_name} completed successfully',
+                tool_name=tool_name,
+                result=result
+            )
+    except Exception as e:
+        error_msg = f"Error executing tool {tool_name}: {str(e)}"
+        logger.error(error_msg, exc_info=True)
+        yield ToolResultEvent(
+            message=error_msg,
+            tool_name=tool_name,
+            result={"error": error_msg}
+        )
 
 # Auto-register tools when module is imported
 register_tools()
-
