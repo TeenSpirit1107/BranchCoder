@@ -8,6 +8,7 @@ import { PatchPreviewProvider, patchSessions } from './patchPreview';
 import { applyPatchToText, computeTextEdits } from './patchUtils';
 
 let chatPanel: ChatPanel | undefined;
+let chatViewProvider: ChatViewProvider | undefined;
 let ragInitializationInProgress = false;
 let ragUpdateInProgress = false;
 let snapshotCheckTimer: NodeJS.Timeout | undefined;
@@ -589,6 +590,7 @@ export function activate(context: vscode.ExtensionContext) {
     
     // Register the chat view
     const provider = new ChatViewProvider(context.extensionUri, context.extensionPath, outputChannel);
+    chatViewProvider = provider;
     
     try {
         const registration = vscode.window.registerWebviewViewProvider(
@@ -678,20 +680,7 @@ export function activate(context: vscode.ExtensionContext) {
                     afterUri,
                     `Patch Preview: ${relativePath}`
                 );
-
-                // Show accept/reject buttons after preview is shown
-                const action = await vscode.window.showInformationMessage(
-                    `Patch preview for ${relativePath} is ready. Do you want to apply it?`,
-                    { modal: false },
-                    'Accept',
-                    'Reject'
-                );
-
-                if (action === 'Accept') {
-                    await vscode.commands.executeCommand('aiChat.applyPatch', sessionId);
-                } else if (action === 'Reject') {
-                    await vscode.commands.executeCommand('aiChat.rejectPatch', sessionId);
-                }
+                // Buttons will be shown in chat panel, not here
             } catch (error: any) {
                 console.error('Error showing patch preview:', error);
                 vscode.window.showErrorMessage(`Failed to show patch preview: ${error.message}`);
@@ -731,24 +720,13 @@ export function activate(context: vscode.ExtensionContext) {
                     return;
                 }
 
-                // Read current file content
-                const doc = await vscode.workspace.openTextDocument(session.targetUri);
-                const currentText = doc.getText();
-
-                // Compute text edits from current text to afterText
-                const edits = computeTextEdits(currentText, session.afterText);
-
-                // Apply edits
-                const edit = new vscode.WorkspaceEdit();
-                edit.set(session.targetUri, edits);
-
-                const success = await vscode.workspace.applyEdit(edit);
-                if (success) {
-                    vscode.window.showInformationMessage('Patch applied successfully 🎉');
-                    // Clean up session after successful application
-                    patchSessions.delete(sessionId);
-                } else {
-                    vscode.window.showErrorMessage('Failed to apply patch');
+                // Accept: Patch is already applied, just confirm and clean up
+                vscode.window.showInformationMessage('Patch accepted and kept 🎉');
+                // Clean up session
+                patchSessions.delete(sessionId);
+                // Notify chat panel to hide buttons
+                if (chatViewProvider?.chatPanel) {
+                    chatViewProvider.chatPanel.hidePatchButtons();
                 }
             } catch (error: any) {
                 console.error('Error applying patch:', error);
@@ -786,11 +764,33 @@ export function activate(context: vscode.ExtensionContext) {
                 const session = patchSessions.get(sessionId);
                 if (session) {
                     const relativePath = vscode.workspace.asRelativePath(session.targetUri, false);
-                    vscode.window.showInformationMessage(`Patch rejected for ${relativePath}. Changes will not be applied.`);
+                    
+                    // Reject: Revert changes back to beforeText
+                    const doc = await vscode.workspace.openTextDocument(session.targetUri);
+                    const currentText = doc.getText();
+                    const edits = computeTextEdits(currentText, session.beforeText);
+                    const edit = new vscode.WorkspaceEdit();
+                    edit.set(session.targetUri, edits);
+                    
+                    const success = await vscode.workspace.applyEdit(edit);
+                    if (success) {
+                        vscode.window.showInformationMessage(`Patch rejected for ${relativePath}. Changes have been reverted.`);
+                    } else {
+                        vscode.window.showErrorMessage('Failed to revert patch changes');
+                    }
+                    
                     // Clean up session
                     patchSessions.delete(sessionId);
+                    // Notify chat panel to hide buttons
+                    if (chatViewProvider?.chatPanel) {
+                        chatViewProvider.chatPanel.hidePatchButtons();
+                    }
                 } else {
                     vscode.window.showInformationMessage('Patch rejected. Changes will not be applied.');
+                    // Notify chat panel to hide buttons
+                    if (chatViewProvider?.chatPanel) {
+                        chatViewProvider.chatPanel.hidePatchButtons();
+                    }
                 }
             } catch (error: any) {
                 console.error('Error rejecting patch:', error);
@@ -809,7 +809,7 @@ export function deactivate() {
 class ChatViewProvider implements vscode.WebviewViewProvider {
     public static readonly viewType = 'aiChat.chatView';
     public _view?: vscode.WebviewView;
-    private chatPanel?: ChatPanel;
+    public chatPanel?: ChatPanel;
 
     constructor(
         private readonly _extensionUri: vscode.Uri,
@@ -840,7 +840,7 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
 
         // Handle messages from webview
         webviewView.webview.onDidReceiveMessage(
-            async (message: { command: string; text?: string }) => {
+            async (message: { command: string; text?: string; sessionId?: string }) => {
                 switch (message.command) {
                     case 'sendMessage':
                         if (message.text) {
@@ -849,6 +849,16 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
                         return;
                     case 'clearChat':
                         this.chatPanel?.clearChat();
+                        return;
+                    case 'applyPatch':
+                        if (message.sessionId) {
+                            await vscode.commands.executeCommand('aiChat.applyPatch', message.sessionId);
+                        }
+                        return;
+                    case 'rejectPatch':
+                        if (message.sessionId) {
+                            await vscode.commands.executeCommand('aiChat.rejectPatch', message.sessionId);
+                        }
                         return;
                 }
             },

@@ -7,6 +7,7 @@ import { applyPatchToText } from './patchUtils';
 
 export class ChatPanel {
     private chatHistory: Array<{ role: string; content: string }> = [];
+    private currentPatchSessionId: string | null = null;
 
     constructor(
         private readonly webview: vscode.Webview,
@@ -24,28 +25,51 @@ export class ChatPanel {
 
         // Add user message to history
         this.chatHistory.push({ role: 'user', content: userMessage });
-        this.update();
+        
+        // Send user message to frontend directly (don't call update() to avoid clearing dynamic messages)
+        this.webview.postMessage({
+            command: 'addEvent',
+            event: {
+                type: 'user_message',
+                message: userMessage
+            }
+        });
 
         try {
             // Call Python AI service (events will be streamed and displayed automatically)
             const aiResponse = await this.callPythonAI(userMessage);
             
-            // Add final response to history
+            // Add final response to history (for future reference, but don't update HTML)
             this.chatHistory.push({ role: 'assistant', content: aiResponse });
-            this.update();
+            // Don't call update() - all events are added dynamically via addEvent
         } catch (error: any) {
             const errorMessage = error.message || 'Failed to get AI response';
             this.chatHistory.push({ 
                 role: 'assistant', 
                 content: `Error: ${errorMessage}` 
             });
-            this.update();
+            // Send error message to frontend
+            this.webview.postMessage({
+                command: 'addEvent',
+                event: {
+                    type: 'error',
+                    message: `Error: ${errorMessage}`
+                }
+            });
         }
     }
 
     public clearChat() {
         this.chatHistory = [];
+        this.currentPatchSessionId = null;
         this.update();
+    }
+
+    public hidePatchButtons() {
+        this.currentPatchSessionId = null;
+        this.webview.postMessage({
+            command: 'hidePatchButtons'
+        });
     }
 
     public dispose() {
@@ -94,6 +118,35 @@ export class ChatPanel {
             // Apply patch to generate afterText
             const afterText = applyPatchToText(beforeText, patchContent, targetFilePath);
 
+            // Generate session ID and store it
+            const sessionId = String(Date.now());
+            
+            // Hide previous patch buttons if any (only if there was a previous patch)
+            if (this.currentPatchSessionId) {
+                this.hidePatchButtons();
+            }
+            
+            // Update current patch session ID
+            this.currentPatchSessionId = sessionId;
+            
+            // Store patch session
+            const { patchSessions } = await import('./patchPreview');
+            patchSessions.set(sessionId, {
+                beforeText,
+                afterText,
+                targetUri,
+                patchContent
+            });
+
+            // Automatically apply patch to code (preview mode)
+            const { computeTextEdits } = await import('./patchUtils');
+            const doc = await vscode.workspace.openTextDocument(targetUri);
+            const currentText = doc.getText();
+            const edits = computeTextEdits(currentText, afterText);
+            const edit = new vscode.WorkspaceEdit();
+            edit.set(targetUri, edits);
+            await vscode.workspace.applyEdit(edit);
+
             // Show patch preview
             await vscode.commands.executeCommand(
                 'aiChat.showPatchPreview',
@@ -102,6 +155,14 @@ export class ChatPanel {
                 afterText,
                 patchContent
             );
+
+            // Notify frontend to show accept/reject buttons
+            const relativePath = vscode.workspace.asRelativePath(targetUri, false);
+            this.webview.postMessage({
+                command: 'showPatchButtons',
+                sessionId: sessionId,
+                filePath: relativePath
+            });
         } catch (error: any) {
             console.error('Error handling apply_patch tool_call:', error);
             if (this.outputChannel) {
@@ -227,6 +288,7 @@ export class ChatPanel {
                         // Track final message for history
                         if (msg.type === 'final_message') {
                             finalMessage = msg.message || '';
+                            // Don't clear patch buttons on final message - keep them visible
                         }
                     } catch (e) {
                         // If JSON parsing fails, log but continue
@@ -337,6 +399,15 @@ export class ChatPanel {
                             </div>
                         `).join('')}
                     </div>
+                    <div class="patch-buttons-container" id="patchButtonsContainer" style="display: none;">
+                        <div class="patch-buttons-info">
+                            <span id="patchFilePath"></span>
+                        </div>
+                        <div class="patch-buttons">
+                            <button id="acceptPatchButton" class="patch-button accept">Accept</button>
+                            <button id="rejectPatchButton" class="patch-button reject">Reject</button>
+                        </div>
+                    </div>
                     <div class="chat-input-container">
                         <textarea 
                             id="messageInput" 
@@ -355,6 +426,11 @@ export class ChatPanel {
                     const chatMessages = document.getElementById('chatMessages');
                     const messageInput = document.getElementById('messageInput');
                     const sendButton = document.getElementById('sendButton');
+                    const patchButtonsContainer = document.getElementById('patchButtonsContainer');
+                    const patchFilePath = document.getElementById('patchFilePath');
+                    const acceptPatchButton = document.getElementById('acceptPatchButton');
+                    const rejectPatchButton = document.getElementById('rejectPatchButton');
+                    let currentPatchSessionId = null;
                     
                     // Markdown renderer function
                     function renderMarkdown(text) {
@@ -410,13 +486,22 @@ export class ChatPanel {
                                 // Directly render backend event
                                 const evt = data.event;
                                 const msgDiv = document.createElement('div');
-                                let className = 'message assistant';
+                                let className = 'message';
+                                
+                                // Determine message role and CSS class
+                                if (evt.type === 'user_message') {
+                                    className += ' user';
+                                } else {
+                                    className += ' assistant';
+                                }
                                 
                                 // Add CSS class based on event type
                                 if (evt.type === 'tool_call') {
                                     className += ' tool-call';
                                 } else if (evt.type === 'tool_result') {
                                     className += ' tool-result';
+                                } else if (evt.type === 'error') {
+                                    className += ' error';
                                 }
                                 
                                 msgDiv.className = className;
@@ -430,6 +515,12 @@ export class ChatPanel {
                                     if (evt.message) {
                                         contentHtml += \`<div class="tool-message">\${renderMarkdown(evt.message)}</div>\`;
                                     }
+                                } else if (evt.type === 'user_message') {
+                                    // User message
+                                    contentHtml = renderMarkdown(evt.message || '');
+                                } else if (evt.type === 'error') {
+                                    // Error message
+                                    contentHtml = '<strong>Error:</strong> ' + renderMarkdown(evt.message || '');
                                 } else {
                                     // Normal message (notification_message or final_message)
                                     if (evt.type === 'notification_message') {
@@ -449,8 +540,64 @@ export class ChatPanel {
                             case 'clearMessages':
                                 chatMessages.innerHTML = '';
                                 break;
+                            case 'showPatchButtons':
+                                if (patchButtonsContainer && patchFilePath) {
+                                    currentPatchSessionId = data.sessionId;
+                                    patchFilePath.textContent = \`Patch ready for: \${data.filePath}\`;
+                                    patchButtonsContainer.classList.add('show');
+                                }
+                                break;
+                            case 'hidePatchButtons':
+                                if (patchButtonsContainer) {
+                                    patchButtonsContainer.classList.remove('show');
+                                    currentPatchSessionId = null;
+                                }
+                                break;
                         }
                     });
+                    
+                    // Handle patch button clicks
+                    if (acceptPatchButton) {
+                        acceptPatchButton.addEventListener('click', () => {
+                            if (currentPatchSessionId) {
+                                // Save sessionId before clearing
+                                const sessionIdToApply = currentPatchSessionId;
+                                
+                                // Hide buttons immediately
+                                if (patchButtonsContainer) {
+                                    patchButtonsContainer.classList.remove('show');
+                                }
+                                currentPatchSessionId = null;
+                                
+                                // Send apply command
+                                vscode.postMessage({
+                                    command: 'applyPatch',
+                                    sessionId: sessionIdToApply
+                                });
+                            }
+                        });
+                    }
+                    
+                    if (rejectPatchButton) {
+                        rejectPatchButton.addEventListener('click', () => {
+                            if (currentPatchSessionId) {
+                                // Save sessionId before clearing
+                                const sessionIdToReject = currentPatchSessionId;
+                                
+                                // Hide buttons immediately
+                                if (patchButtonsContainer) {
+                                    patchButtonsContainer.classList.remove('show');
+                                }
+                                currentPatchSessionId = null;
+                                
+                                // Send reject command
+                                vscode.postMessage({
+                                    command: 'rejectPatch',
+                                    sessionId: sessionIdToReject
+                                });
+                            }
+                        });
+                    }
                     
                     // Initial scroll
                     scrollToBottom();

@@ -46,7 +46,7 @@ class AsyncChatClientWrapper:
     async def ask(
         self,
         messages: List[Dict[str, Any]],
-        temperature: float = 1,
+        temperature: float = 0,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Literal["none", "auto", Dict[str, Any]]] = None,
         response_format: Optional[Dict[str, Any]] = None,

@@ -210,6 +210,69 @@ body {
     overflow-wrap: normal;
 }
 
+.patch-buttons-container {
+    display: none; /* Hidden by default, shown only when patch is available */
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px;
+    border-top: 1px solid var(--vscode-panel-border);
+    background-color: var(--vscode-editor-background);
+}
+
+.patch-buttons-container.show {
+    display: flex;
+}
+
+.patch-buttons-info {
+    font-size: 0.9em;
+    color: var(--vscode-descriptionForeground);
+    margin-bottom: 4px;
+}
+
+.patch-buttons {
+    display: flex;
+    gap: 8px;
+}
+
+.patch-button {
+    flex: 1;
+    padding: 8px 16px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-family: var(--vscode-font-family);
+    font-size: var(--vscode-font-size);
+    font-weight: 500;
+    transition: opacity 0.2s;
+}
+
+.patch-button:hover {
+    opacity: 0.8;
+}
+
+.patch-button:active {
+    opacity: 0.6;
+}
+
+.patch-button.accept {
+    background-color: var(--vscode-button-background);
+    color: var(--vscode-button-foreground);
+}
+
+.patch-button.accept:hover {
+    background-color: var(--vscode-button-hoverBackground);
+}
+
+.patch-button.reject {
+    background-color: var(--vscode-input-background);
+    color: var(--vscode-input-foreground);
+    border: 1px solid var(--vscode-input-border);
+}
+
+.patch-button.reject:hover {
+    background-color: var(--vscode-list-hoverBackground);
+}
+
 .chat-input-container {
     display: flex;
     gap: 8px;
