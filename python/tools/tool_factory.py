@@ -160,6 +160,7 @@ async def execute_tool(tool_call_event: ToolCallEvent) -> AsyncGenerator[BaseEve
     call_notification = tool.get_call_notification(tool_args)
     if call_notification:
         tool_call_event.message = call_notification
+    yield tool_call_event
 
     try:
         logger.info(f"Executing tool: {tool_name} with args: {tool_args}")

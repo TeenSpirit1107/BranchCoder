@@ -45,6 +45,8 @@ class FlowAgent:
                 )):
                     if isinstance(event, MessageEvent):
                         yield event
+                    elif isinstance(event, ToolCallEvent):
+                        yield event
                     elif isinstance(event, ToolResultEvent):
                         yield event
                         tool_result = event.result
