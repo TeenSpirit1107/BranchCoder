@@ -3,8 +3,11 @@ import os
 from typing import Any, Dict, List, Optional, Literal, TypedDict
 from openai import AsyncOpenAI
 from dotenv import load_dotenv
+from utils.logger import Logger
 
 load_dotenv()
+
+logger = Logger('chat_llm', log_to_file=False)
 
 class CompletionResult(TypedDict):
     type: Literal["tool_call", "answer"]
@@ -65,7 +68,32 @@ class AsyncChatClientWrapper:
             kwargs["response_format"] = response_format
 
         completion = await self.client.chat.completions.create(**kwargs)
-        return self._parse_completion(completion)
+        result = self._parse_completion(completion)
+        
+        # Log LLM response
+        logger.info("=" * 80)
+        logger.info("LLM Response:")
+        logger.info(f"Type: {result.get('type', 'unknown')}")
+        if result.get("type") == "tool_call":
+            logger.info(f"Tool Name: {result.get('tool_name', 'unknown')}")
+            logger.info(f"Tool Args: {json.dumps(result.get('tool_args', {}), ensure_ascii=False, indent=2)}")
+        else:
+            response_text = result.get("answer", "") or ""
+            # Truncate very long responses for readability
+            if len(response_text) > 1000:
+                logger.info(f"Response (length: {len(response_text)}):")
+                logger.info(response_text[:500] + "\n... [truncated] ...\n" + response_text[-500:])
+            else:
+                logger.info(f"Response (length: {len(response_text)}):")
+                logger.info(response_text)
+        
+        # Log token usage
+        usage = result.get("usage", {})
+        if usage:
+            logger.info(f"Token Usage: prompt={usage.get('prompt_tokens', 0)}, completion={usage.get('completion_tokens', 0)}, total={usage.get('total_tokens', 0)}")
+        logger.info("=" * 80)
+        
+        return result
 
     def _parse_completion(self, completion: Any) -> CompletionResult:
         choice = completion.choices[0]
