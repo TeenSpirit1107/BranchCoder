@@ -3,7 +3,7 @@
 Model definitions for flow agent messages
 """
 
-from model.models import (
+from models.models import (
     BaseEvent,
     ToolCallEvent,
     ToolResultEvent,

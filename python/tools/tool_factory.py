@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any, AsyncGenerator
 from utils.logger import Logger
 from tools.base_tool import MCPTool
-from model import ToolCallEvent, ToolResultEvent, BaseEvent
+from models import ToolCallEvent, ToolResultEvent, BaseEvent
 
 logger = Logger('tool_factory', log_to_file=False)
 
