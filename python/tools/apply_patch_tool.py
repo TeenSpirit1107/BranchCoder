@@ -59,7 +59,7 @@ class ApplyPatchTool(MCPTool):
                         },
                         "target_file": {
                             "type": "string",
-                            "description": "Optional target file path (overrides patch header)"
+                            "description": "target file path (ABS path)"
                         },
                         "dry_run": {
                             "type": "boolean",
@@ -67,7 +67,7 @@ class ApplyPatchTool(MCPTool):
                             "default": False
                         }
                     },
-                    "required": ["patch_content"]
+                    "required": ["patch_content", "target_file"]
                 }
             }
         }
@@ -220,6 +220,7 @@ class ApplyPatchTool(MCPTool):
                     
                     # Only add patch if we have content
                     if all_old_lines or all_new_lines:
+                        logger.debug(f"Parsed patch for file: {target_file} ({len(all_old_lines)} old lines, {len(all_new_lines)} new lines)")
                         patches.append((target_file, all_old_lines, all_new_lines))
                     continue
             
@@ -232,7 +233,7 @@ class ApplyPatchTool(MCPTool):
         Apply patch to a single file.
         
         Args:
-            file_path: Path to the file to patch
+            file_path: Path to the file to patch (should be absolute path from LLM)
             old_lines: Expected old lines (for validation)
             new_lines: New lines to apply
             dry_run: If True, only validate without applying
@@ -240,31 +241,35 @@ class ApplyPatchTool(MCPTool):
         Returns:
             Dictionary with result information
         """
-        # Resolve file path relative to workspace_dir if set
-        if self.workspace_dir:
-            if os.path.isabs(file_path):
-                # If absolute path, use as is
-                resolved_path = Path(file_path)
-            else:
-                # If relative, resolve relative to workspace_dir
-                resolved_path = Path(self.workspace_dir) / file_path
-        else:
-            resolved_path = Path(file_path)
+        logger.info(f"Applying patch to file: {file_path}")
+        logger.debug(f"  - Old lines count: {len(old_lines)}")
+        logger.debug(f"  - New lines count: {len(new_lines)}")
+        logger.debug(f"  - Dry run: {dry_run}")
         
-        resolved_path = resolved_path.resolve()
+        # Use file_path directly as it should be an absolute path from LLM
+        # No need to concatenate with workspace_dir
+        resolved_path = Path(file_path).resolve()
+        
+        logger.info(f"Resolved file path: {resolved_path}")
         
         # Check if file exists
         if not resolved_path.exists():
+            logger.error(f"File does not exist: {resolved_path}")
             return {
                 "success": False,
                 "error": f"File does not exist: {resolved_path}",
                 "file_path": str(resolved_path)
             }
         
+        logger.info(f"File exists, proceeding with patch application")
+        
         try:
             # Read current file content
+            logger.debug(f"Reading file content from: {resolved_path}")
             with open(resolved_path, 'r', encoding='utf-8') as f:
                 current_lines = f.readlines()
+            
+            logger.debug(f"File has {len(current_lines)} lines")
             
             # Remove trailing newlines for comparison
             current_lines = [line.rstrip('\n\r') for line in current_lines]
@@ -272,13 +277,16 @@ class ApplyPatchTool(MCPTool):
             
             # Try to find the location to apply the patch
             # Simple approach: find the first occurrence of old_lines in current_lines
+            logger.debug(f"Searching for patch location (looking for {len(old_lines)} lines)")
             patch_start = -1
             for i in range(len(current_lines) - len(old_lines) + 1):
                 if current_lines[i:i+len(old_lines)] == old_lines:
                     patch_start = i
+                    logger.info(f"Found exact match at line {patch_start + 1}")
                     break
             
             if patch_start == -1:
+                logger.warning("Exact match not found, trying fuzzy matching")
                 # Try fuzzy matching - find at least 50% match
                 best_match = -1
                 best_score = 0
@@ -291,6 +299,8 @@ class ApplyPatchTool(MCPTool):
                         best_match = i
                 
                 if best_score < 0.5:
+                    logger.error(f"Could not find patch location. Best match score: {best_score:.2f}")
+                    logger.debug(f"Expected context (first 5 lines): {old_lines[:5] if len(old_lines) > 5 else old_lines}")
                     return {
                         "success": False,
                         "error": f"Could not find patch location in file. Expected context not found.",
@@ -300,9 +310,10 @@ class ApplyPatchTool(MCPTool):
                     }
                 else:
                     patch_start = best_match
-                    logger.warning(f"Using fuzzy match (score: {best_score:.2f}) for patch application")
+                    logger.warning(f"Using fuzzy match (score: {best_score:.2f}) at line {patch_start + 1} for patch application")
             
             if dry_run:
+                logger.info(f"Dry run: Patch would be applied at line {patch_start + 1}")
                 return {
                     "success": True,
                     "dry_run": True,
@@ -314,17 +325,22 @@ class ApplyPatchTool(MCPTool):
                 }
             
             # Apply the patch
+            logger.info(f"Applying patch at line {patch_start + 1}: replacing {len(old_lines)} lines with {len(new_lines)} lines")
             new_file_lines = (
                 current_lines[:patch_start] +
                 new_lines +
                 current_lines[patch_start + len(old_lines):]
             )
             
+            logger.debug(f"New file will have {len(new_file_lines)} lines (was {len(current_lines)})")
+            
             # Write back to file
+            logger.info(f"Writing patched content to: {resolved_path}")
             with open(resolved_path, 'w', encoding='utf-8') as f:
                 for line in new_file_lines:
                     f.write(line + '\n')
             
+            logger.info(f"Patch applied successfully to {resolved_path}")
             return {
                 "success": True,
                 "file_path": str(resolved_path),
@@ -348,31 +364,38 @@ class ApplyPatchTool(MCPTool):
         
         Args:
             patch_content: Patch content in unified diff format, or path to patch file
-            target_file: Optional target file path (overrides patch header)
+            target_file: Optional target file path (overrides patch header) - should be absolute path
             dry_run: If True, only validate without applying
         
         Returns:
             Dictionary with execution results
         """
-        logger.info(f"Applying patch (dry_run={dry_run})")
+        logger.info("=" * 80)
+        logger.info(f"Execute apply_patch tool (dry_run={dry_run})")
+        if target_file:
+            logger.info(f"Target file override: {target_file}")
+        logger.info(f"Patch content length: {len(patch_content)} characters")
         
         # Check if patch_content is a file path
         patch_text = patch_content
         if os.path.exists(patch_content):
             try:
+                logger.info(f"Reading patch from file: {patch_content}")
                 with open(patch_content, 'r', encoding='utf-8') as f:
                     patch_text = f.read()
-                logger.debug(f"Read patch from file: {patch_content}")
+                logger.debug(f"Read {len(patch_text)} characters from patch file")
             except Exception as e:
-                logger.error(f"Error reading patch file: {e}")
+                logger.error(f"Error reading patch file: {e}", exc_info=True)
                 return {
                     "success": False,
                     "error": f"Failed to read patch file: {str(e)}"
                 }
         
         # Parse the patch
+        logger.info("Parsing patch content...")
         try:
             patches = self._parse_patch(patch_text)
+            logger.info(f"Parsed {len(patches)} patch(es) from content")
         except Exception as e:
             logger.error(f"Error parsing patch: {e}", exc_info=True)
             return {
@@ -381,23 +404,39 @@ class ApplyPatchTool(MCPTool):
             }
         
         if not patches:
+            logger.error("No valid patches found in patch content")
             return {
                 "success": False,
                 "error": "No valid patches found in patch content. Patch should be in unified diff format starting with '---' and '+++'."
             }
         
+        # Log parsed patches
+        for i, (file_path, old_lines, new_lines) in enumerate(patches, 1):
+            logger.info(f"Patch {i}: file={file_path}, old_lines={len(old_lines)}, new_lines={len(new_lines)}")
+        
         # Apply each patch
+        logger.info("Applying patches...")
         results = []
-        for file_path, old_lines, new_lines in patches:
+        for i, (file_path, old_lines, new_lines) in enumerate(patches, 1):
             # Use target_file if provided, otherwise use file_path from patch
+            # Both should be absolute paths
             actual_target = target_file if target_file else file_path
+            logger.info(f"Processing patch {i}/{len(patches)}: {actual_target}")
             
             result = self._apply_patch_to_file(actual_target, old_lines, new_lines, dry_run)
             results.append(result)
+            
+            if result.get("success"):
+                logger.info(f"Patch {i} applied successfully")
+            else:
+                logger.error(f"Patch {i} failed: {result.get('error', 'unknown error')}")
         
         # Return summary
         success_count = sum(1 for r in results if r.get("success", False))
         total_count = len(results)
+        
+        logger.info(f"Patch application complete: {success_count}/{total_count} successful")
+        logger.info("=" * 80)
         
         return_dict = {
             "success": success_count == total_count,
