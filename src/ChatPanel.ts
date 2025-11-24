@@ -220,11 +220,11 @@ export class ChatPanel {
                 reject(new Error(errorMsg));
             });
 
-            // Timeout after 30 seconds
-            setTimeout(() => {
-                pythonProcess.kill();
-                reject(new Error('AI request timed out'));
-            }, 30000);
+            // // Timeout after 30 seconds
+            // setTimeout(() => {
+            //     pythonProcess.kill();
+            //     reject(new Error('AI request timed out'));
+            // }, 30000);
         });
     }
 
