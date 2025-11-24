@@ -8,7 +8,6 @@ import json
 from datetime import datetime
 from typing import List, Dict, Optional, Any, Tuple
 from utils.logger import Logger
-from utils.apply_patch import ApplyPatch
 from llm.chat_llm import AsyncChatClientWrapper
 from tools.register import get_tool_definitions, get_tool, execute_tool_async
 from model import StatusMessage, ToolCallMessage, ToolResultMessage, FinalMessage
@@ -35,26 +34,6 @@ class FlowAgent:
         
         # Get all registered tools (automatically registered via tools.register)
         self.tools = get_tool_definitions()
-        
-        # Set workspace directory for tools that support it
-        if workspace_dir:
-            # Initialize patch utility
-            self.patch_util = ApplyPatch(workspace_dir=workspace_dir)
-
-            # Set workspace directory for RAG tool
-            rag_tool = get_tool("workspace_rag_retrieve")
-            if rag_tool and hasattr(rag_tool, 'set_workspace_dir'):
-                rag_tool.set_workspace_dir(workspace_dir)
-            
-            # Set workspace directory for Command tool
-            command_tool = get_tool("execute_command")
-            if command_tool and hasattr(command_tool, 'set_workspace_dir'):
-                command_tool.set_workspace_dir(workspace_dir)
-            
-            # Set workspace directory for Workspace Structure tool
-            structure_tool = get_tool("get_workspace_structure")
-            if structure_tool and hasattr(structure_tool, 'set_workspace_dir'):
-                structure_tool.set_workspace_dir(workspace_dir)
         
         logger.info(f"Flow agent initialized with {len(self.tools)} tools: {[t['function']['name'] for t in self.tools]}")
     
@@ -154,6 +133,28 @@ Current Information:
             - FinalMessage(type="message", content="...") - Final message (signals end)
         """
         logger.debug(f"Processing {len(messages)} messages through flow agent")
+        
+        # Update workspace directory for tools if provided
+        if workspace_dir:
+            # Set workspace directory for Apply Patch tool
+            patch_tool = get_tool("apply_patch")
+            if patch_tool and hasattr(patch_tool, 'set_workspace_dir'):
+                patch_tool.set_workspace_dir(workspace_dir)
+            
+            # Set workspace directory for RAG tool
+            rag_tool = get_tool("workspace_rag_retrieve")
+            if rag_tool and hasattr(rag_tool, 'set_workspace_dir'):
+                rag_tool.set_workspace_dir(workspace_dir)
+            
+            # Set workspace directory for Command tool
+            command_tool = get_tool("execute_command")
+            if command_tool and hasattr(command_tool, 'set_workspace_dir'):
+                command_tool.set_workspace_dir(workspace_dir)
+            
+            # Set workspace directory for Workspace Structure tool
+            structure_tool = get_tool("get_workspace_structure")
+            if structure_tool and hasattr(structure_tool, 'set_workspace_dir'):
+                structure_tool.set_workspace_dir(workspace_dir)
         
         # Generate system prompt (includes workspace_dir, current time, and workspace structure)
         system_prompt = await self.generate_system_prompt(workspace_dir=workspace_dir)
@@ -329,7 +330,8 @@ Current Information:
         logger.info("Applying patch from response")
         
         try:
-            result = await self.patch_util.apply(patch_content=patch_content)
+            # Use apply_patch tool from registry
+            result = await execute_tool_async("apply_patch", patch_content=patch_content)
             
             if result.get("success", False):
                 applied_count = result.get("patches_applied", 0)
