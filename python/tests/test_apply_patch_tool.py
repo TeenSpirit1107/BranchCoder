@@ -1,27 +1,28 @@
 #!/usr/bin/env python3
 """
-Test suite for ApplyPatch
+Test suite for ApplyPatchTool
 Tests patch application functionality including unified diff parsing and file patching.
 """
 
 import asyncio
 import sys
 import tempfile
+import os
 from pathlib import Path
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from utils.apply_patch import ApplyPatch
+from tools.apply_patch_tool import ApplyPatchTool
 
 
 async def test_apply_patch_tool():
-    """Run comprehensive tests for ApplyPatch."""
+    """Run comprehensive tests for ApplyPatchTool."""
     print("=" * 80)
-    print("ApplyPatch Test Suite")
+    print("ApplyPatchTool Test Suite")
     print("=" * 80)
     
-    tool = ApplyPatch()
+    tool = ApplyPatchTool()
     passed = 0
     failed = 0
     
@@ -49,8 +50,9 @@ Line 5"""
  Line 4
  Line 5"""
             
-            tool.set_workspace_dir(tmpdir)
-            result = await tool.apply(patch_content=patch_content, target_file="test.txt")
+            # Use absolute path for target_file_path
+            target_file_path = str(test_file.resolve())
+            result = await tool.execute(patch_content=patch_content, target_file_path=target_file_path)
             
             assert result["success"] is True, "Patch should succeed"
             assert result["patches_applied"] == 1, "Should apply 1 patch"
@@ -96,8 +98,8 @@ def world():
 +    print("World!")
      return False"""
             
-            tool.set_workspace_dir(tmpdir)
-            result = await tool.apply(patch_content=patch_content, target_file="test.py")
+            target_file_path = str(test_file.resolve())
+            result = await tool.execute(patch_content=patch_content, target_file_path=target_file_path)
             
             assert result["success"] is True, "Patch should succeed"
             
@@ -127,8 +129,8 @@ def world():
 -Original content
 +Modified content"""
             
-            tool.set_workspace_dir(tmpdir)
-            result = await tool.apply(patch_content=patch_content, target_file="test.txt", dry_run=True)
+            target_file_path = str(test_file.resolve())
+            result = await tool.execute(patch_content=patch_content, target_file_path=target_file_path, dry_run=True)
             
             assert result["success"] is True, "Dry run should succeed"
             assert result.get("dry_run") is True, "Should indicate dry run"
@@ -167,8 +169,8 @@ Footer line"""
  Context after
  Footer line"""
             
-            tool.set_workspace_dir(tmpdir)
-            result = await tool.apply(patch_content=patch_content, target_file="test.txt")
+            target_file_path = str(test_file.resolve())
+            result = await tool.execute(patch_content=patch_content, target_file_path=target_file_path)
             
             assert result["success"] is True, "Patch should succeed"
             
@@ -187,12 +189,18 @@ Footer line"""
     # Test 5: Invalid patch format
     print("\n[Test 5] Invalid patch format handling...")
     try:
-        result = await tool.apply(patch_content="This is not a patch")
-        assert result["success"] is False, "Invalid patch should fail"
-        assert "error" in result, "Should return error message"
-        print(f"  ✓ Invalid patch correctly rejected")
-        print(f"  ✓ Error: {result.get('error', 'N/A')[:50]}")
-        passed += 1
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Create a dummy file for target_file_path (required parameter)
+            test_file = Path(tmpdir) / "dummy.txt"
+            test_file.write_text("dummy")
+            
+            target_file_path = str(test_file.resolve())
+            result = await tool.execute(patch_content="This is not a patch", target_file_path=target_file_path)
+            assert result["success"] is False, "Invalid patch should fail"
+            assert "error" in result, "Should return error message"
+            print(f"  ✓ Invalid patch correctly rejected")
+            print(f"  ✓ Error: {result.get('error', 'N/A')[:50]}")
+            passed += 1
     except Exception as e:
         print(f"  ✗ Failed: {e}")
         failed += 1
@@ -207,11 +215,14 @@ Footer line"""
 -Old
 +New"""
             
-            tool.set_workspace_dir(tmpdir)
-            result = await tool.apply(patch_content=patch_content)
+            # Use absolute path for non-existent file
+            nonexistent_file = Path(tmpdir) / "nonexistent.txt"
+            target_file_path = str(nonexistent_file.resolve())
+            
+            result = await tool.execute(patch_content=patch_content, target_file_path=target_file_path)
             
             assert result["success"] is False, "Should fail when file doesn't exist"
-            assert "error" in result.get("results", [{}])[0], "Should have error in result"
+            assert "error" in result.get("results", [{}])[0] if result.get("results") else result, "Should have error in result"
             
             print(f"  ✓ File not found correctly handled")
             passed += 1
@@ -236,8 +247,8 @@ Footer line"""
 +Modified"""
             patch_file.write_text(patch_content)
             
-            tool.set_workspace_dir(tmpdir)
-            result = await tool.apply(patch_content=str(patch_file))
+            target_file_path = str(test_file.resolve())
+            result = await tool.execute(patch_content=str(patch_file), target_file_path=target_file_path)
             
             assert result["success"] is True, "Patch from file should succeed"
             
@@ -255,10 +266,48 @@ Footer line"""
     # Test 8: Workspace directory setting
     print("\n[Test 8] Workspace directory setting...")
     try:
-        test_tool = ApplyPatch()
+        test_tool = ApplyPatchTool()
         test_tool.set_workspace_dir("/test/workspace")
         assert test_tool.workspace_dir == "/test/workspace", "Workspace directory should be set"
         print(f"  ✓ Workspace directory can be set")
+        passed += 1
+    except Exception as e:
+        print(f"  ✗ Failed: {e}")
+        failed += 1
+    
+    # Test 9: Tool definition
+    print("\n[Test 9] Tool definition...")
+    try:
+        definition = tool.get_tool_definition()
+        assert definition["type"] == "function", "Should be function type"
+        assert definition["function"]["name"] == "apply_patch", "Name should match"
+        assert "parameters" in definition["function"], "Should have parameters"
+        print(f"  ✓ Tool name: {definition['function']['name']}")
+        print(f"  ✓ Has parameters")
+        passed += 1
+    except Exception as e:
+        print(f"  ✗ Failed: {e}")
+        failed += 1
+    
+    # Test 10: Notification methods
+    print("\n[Test 10] Notification methods...")
+    try:
+        call_notif = tool.get_call_notification({
+            "patch_content": "test patch",
+            "target_file_path": "/test/file.txt",
+            "dry_run": False
+        })
+        result_notif = tool.get_result_notification({
+            "success": True,
+            "patches_applied": 1,
+            "patches_total": 1
+        })
+        
+        assert isinstance(call_notif, str), "Call notification should be string"
+        assert isinstance(result_notif, str), "Result notification should be string"
+        print(f"  ✓ Notification methods return correct types")
+        print(f"  ✓ Call notification: {call_notif[:50]}...")
+        print(f"  ✓ Result notification: {result_notif[:50]}...")
         passed += 1
     except Exception as e:
         print(f"  ✗ Failed: {e}")
@@ -274,4 +323,3 @@ Footer line"""
 
 if __name__ == "__main__":
     asyncio.run(test_apply_patch_tool())
-

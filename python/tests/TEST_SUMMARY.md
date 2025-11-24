@@ -6,7 +6,7 @@
 
 | 工具 | 测试文件 | 状态 |
 |------|---------|------|
-| ApplyPatchTool | `test_apply_patch_tool.py` | ✅ 有测试 |
+| ApplyPatchTool | `test_apply_patch_tool.py` | ✅ 已修复（更新为测试 ApplyPatchTool） |
 | CommandTool | `test_command_tool.py` | ✅ 已修复（添加 workspace_dir） |
 | FetchUrlTool | `test_fetch_url_tool.py` | ✅ 有测试 |
 | LintTool | `test_lint_tool.py` | ✅ 有测试 |
@@ -16,6 +16,13 @@
 | WorkspaceStructureTool | `test_workspace_structure_tool.py` | ✅ 有测试 |
 
 ### 测试结果
+
+#### ApplyPatchTool (已修复)
+- ✅ 10 passed, 0 failed
+- 修复：更新为测试 ApplyPatchTool 而不是旧的 ApplyPatch 类
+- 修复：使用 execute() 方法而不是 apply() 方法
+- 修复：使用 target_file_path 参数（绝对路径）而不是 target_file 参数
+- 测试覆盖：基本补丁应用、多 hunk 补丁、dry run、上下文行、无效格式、文件不存在、从文件路径读取、workspace 目录设置、工具定义、通知方法
 
 #### CommandTool (已修复)
 - ✅ 6 passed, 0 failed
