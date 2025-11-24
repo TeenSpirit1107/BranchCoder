@@ -52,13 +52,13 @@ class ApplyPatchTool(MCPTool):
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "patch_content": {
-                            "type": "string",
-                            "description": "Patch content in unified diff format, or path to patch file"
-                        },
                         "target_file_path": {
                             "type": "string",
                             "description": "Target file absolute path (begin with /, not with workspace_dir)"
+                        },
+                        "patch_content": {
+                            "type": "string",
+                            "description": "Patch content in unified diff format. E.g. --- test.txt+++ test.txt@@ -1,5 +1,5 @@Line 1-Line 2+Line 2 Modified Line 3 Line 4 Line 5"
                         },
                         "dry_run": {
                             "type": "boolean",
@@ -112,6 +112,9 @@ class ApplyPatchTool(MCPTool):
     def _parse_patch(self, patch_content: str) -> List[Tuple[str, List[str], List[str]]]:
         """
         Parse unified diff patch content.
+        Supports both standard unified diff format and simplified format:
+        - Standard: --- file_path\n+++ file_path\n@@ ... @@\n...
+        - Simplified: *** Begin Patch\n*** Update File: file_path\n+line\n-line\n*** End Patch
         
         Args:
             patch_content: Patch content string
@@ -121,6 +124,11 @@ class ApplyPatchTool(MCPTool):
         """
         patches = []
         lines = patch_content.split('\n')
+        
+        # Try to detect simplified format first
+        if '*** Begin Patch' in patch_content or '*** Update File:' in patch_content:
+            return self._parse_simplified_patch(patch_content)
+        
         i = 0
         
         while i < len(lines):
@@ -228,6 +236,94 @@ class ApplyPatchTool(MCPTool):
         
         return patches
     
+    def _parse_simplified_patch(self, patch_content: str) -> List[Tuple[str, List[str], List[str]]]:
+        """
+        Parse simplified patch format:
+        *** Begin Patch
+        *** Update File: /path/to/file
+        +new line
+        -old line
+        context line (no prefix)
+        *** End Patch
+        
+        Args:
+            patch_content: Simplified patch content string
+        
+        Returns:
+            List of tuples: (file_path, old_lines, new_lines)
+        """
+        patches = []
+        lines = patch_content.split('\n')
+        i = 0
+        current_file = None
+        old_lines = []
+        new_lines = []
+        in_patch = False
+        
+        while i < len(lines):
+            line = lines[i]
+            
+            # Look for patch start
+            if '*** Begin Patch' in line or '*** Update File:' in line:
+                in_patch = True
+                # Extract file path from "*** Update File: /path/to/file"
+                if '*** Update File:' in line:
+                    current_file = line.split('*** Update File:')[1].strip()
+                    # Ensure absolute path
+                    if current_file and not current_file.startswith('/'):
+                        current_file = '/' + current_file
+                i += 1
+                continue
+            
+            # Look for patch end
+            if '*** End Patch' in line:
+                if current_file and (old_lines or new_lines):
+                    patches.append((current_file, old_lines, new_lines))
+                current_file = None
+                old_lines = []
+                new_lines = []
+                in_patch = False
+                i += 1
+                continue
+            
+            if in_patch and current_file:
+                # Parse patch lines
+                if line.startswith('+'):
+                    # Added line - only in new
+                    new_lines.append(line[1:])
+                    # For pure additions, old_lines should be empty or match context
+                    # We'll handle this by making old_lines empty for pure additions
+                elif line.startswith('-'):
+                    # Removed line - only in old
+                    old_lines.append(line[1:])
+                    # If there's no corresponding new line, add empty to new_lines
+                    if len(new_lines) < len(old_lines):
+                        new_lines.append('')
+                elif line.strip() == '':
+                    # Empty line - add to both if we have context, otherwise skip
+                    if old_lines or new_lines:
+                        # Only add if we're in the middle of a patch
+                        if len(old_lines) < len(new_lines):
+                            old_lines.append('')
+                        elif len(new_lines) < len(old_lines):
+                            new_lines.append('')
+                        else:
+                            old_lines.append('')
+                            new_lines.append('')
+                elif not line.startswith('***'):
+                    # Context line (no prefix) - this means unchanged line
+                    # Add to both old and new
+                    old_lines.append(line)
+                    new_lines.append(line)
+            
+            i += 1
+        
+        # Handle case where patch doesn't end with "*** End Patch"
+        if in_patch and current_file and (old_lines or new_lines):
+            patches.append((current_file, old_lines, new_lines))
+        
+        return patches
+    
     def _apply_patch_to_file(self, file_path: str, old_lines: List[str], new_lines: List[str], dry_run: bool = False) -> Dict[str, Any]:
         """
         Apply patch to a single file.
@@ -275,42 +371,47 @@ class ApplyPatchTool(MCPTool):
             current_lines = [line.rstrip('\n\r') for line in current_lines]
             old_lines = [line.rstrip('\n\r') for line in old_lines]
             
-            # Try to find the location to apply the patch
-            # Simple approach: find the first occurrence of old_lines in current_lines
-            logger.debug(f"Searching for patch location (looking for {len(old_lines)} lines)")
-            patch_start = -1
-            for i in range(len(current_lines) - len(old_lines) + 1):
-                if current_lines[i:i+len(old_lines)] == old_lines:
-                    patch_start = i
-                    logger.info(f"Found exact match at line {patch_start + 1}")
-                    break
-            
-            if patch_start == -1:
-                logger.warning("Exact match not found, trying fuzzy matching")
-                # Try fuzzy matching - find at least 50% match
-                best_match = -1
-                best_score = 0
+            # Handle pure addition case (old_lines is empty)
+            if not old_lines and new_lines:
+                logger.info("Pure addition patch: appending new lines to end of file")
+                patch_start = len(current_lines)
+            else:
+                # Try to find the location to apply the patch
+                # Simple approach: find the first occurrence of old_lines in current_lines
+                logger.debug(f"Searching for patch location (looking for {len(old_lines)} lines)")
+                patch_start = -1
                 for i in range(len(current_lines) - len(old_lines) + 1):
-                    match_count = sum(1 for j, old_line in enumerate(old_lines) 
-                                    if i + j < len(current_lines) and current_lines[i + j] == old_line)
-                    score = match_count / len(old_lines) if old_lines else 0
-                    if score > best_score:
-                        best_score = score
-                        best_match = i
+                    if current_lines[i:i+len(old_lines)] == old_lines:
+                        patch_start = i
+                        logger.info(f"Found exact match at line {patch_start + 1}")
+                        break
                 
-                if best_score < 0.5:
-                    logger.error(f"Could not find patch location. Best match score: {best_score:.2f}")
-                    logger.debug(f"Expected context (first 5 lines): {old_lines[:5] if len(old_lines) > 5 else old_lines}")
-                    return {
-                        "success": False,
-                        "error": f"Could not find patch location in file. Expected context not found.",
-                        "file_path": str(resolved_path),
-                        "expected_context": old_lines[:5] if len(old_lines) > 5 else old_lines,
-                        "best_match_score": best_score
-                    }
-                else:
-                    patch_start = best_match
-                    logger.warning(f"Using fuzzy match (score: {best_score:.2f}) at line {patch_start + 1} for patch application")
+                if patch_start == -1:
+                    logger.warning("Exact match not found, trying fuzzy matching")
+                    # Try fuzzy matching - find at least 50% match
+                    best_match = -1
+                    best_score = 0
+                    for i in range(len(current_lines) - len(old_lines) + 1):
+                        match_count = sum(1 for j, old_line in enumerate(old_lines) 
+                                        if i + j < len(current_lines) and current_lines[i + j] == old_line)
+                        score = match_count / len(old_lines) if old_lines else 0
+                        if score > best_score:
+                            best_score = score
+                            best_match = i
+                    
+                    if best_score < 0.5:
+                        logger.error(f"Could not find patch location. Best match score: {best_score:.2f}")
+                        logger.debug(f"Expected context (first 5 lines): {old_lines[:5] if len(old_lines) > 5 else old_lines}")
+                        return {
+                            "success": False,
+                            "error": f"Could not find patch location in file. Expected context not found.",
+                            "file_path": str(resolved_path),
+                            "expected_context": old_lines[:5] if len(old_lines) > 5 else old_lines,
+                            "best_match_score": best_score
+                        }
+                    else:
+                        patch_start = best_match
+                        logger.warning(f"Using fuzzy match (score: {best_score:.2f}) at line {patch_start + 1} for patch application")
             
             if dry_run:
                 logger.info(f"Dry run: Patch would be applied at line {patch_start + 1}")

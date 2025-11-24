@@ -30,15 +30,15 @@ async def test_command_tool():
     try:
         with tempfile.TemporaryDirectory() as tmpdir:
             tool.set_workspace_dir(tmpdir)
-            result = await tool.execute(command="echo 'Hello, World!'")
-            assert result["success"] is True, "Command should succeed"
-            assert "Hello, World!" in result["stdout"], "Output should contain expected text"
-            assert result["returncode"] == 0, "Return code should be 0"
-            assert "command" in result, "Result should contain command"
-            print(f"  ✓ Command: echo 'Hello, World!'")
-            print(f"  ✓ Return code: {result['returncode']}")
-            print(f"  ✓ Output: {result['stdout'].strip()}")
-            passed += 1
+        result = await tool.execute(command="echo 'Hello, World!'")
+        assert result["success"] is True, "Command should succeed"
+        assert "Hello, World!" in result["stdout"], "Output should contain expected text"
+        assert result["returncode"] == 0, "Return code should be 0"
+        assert "command" in result, "Result should contain command"
+        print(f"  ✓ Command: echo 'Hello, World!'")
+        print(f"  ✓ Return code: {result['returncode']}")
+        print(f"  ✓ Output: {result['stdout'].strip()}")
+        passed += 1
     except Exception as e:
         print(f"  ✗ Failed: {e}")
         failed += 1
@@ -69,12 +69,12 @@ async def test_command_tool():
     try:
         with tempfile.TemporaryDirectory() as tmpdir:
             tool.set_workspace_dir(tmpdir)
-            result = await tool.execute(command="nonexistent_command_xyz123")
-            assert result["success"] is False, "Invalid command should fail"
-            assert result["returncode"] != 0, "Return code should be non-zero"
-            print(f"  ✓ Invalid command correctly handled")
-            print(f"  ✓ Return code: {result['returncode']}")
-            passed += 1
+        result = await tool.execute(command="nonexistent_command_xyz123")
+        assert result["success"] is False, "Invalid command should fail"
+        assert result["returncode"] != 0, "Return code should be non-zero"
+        print(f"  ✓ Invalid command correctly handled")
+        print(f"  ✓ Return code: {result['returncode']}")
+        passed += 1
     except Exception as e:
         print(f"  ✗ Failed: {e}")
         failed += 1
@@ -84,13 +84,13 @@ async def test_command_tool():
     try:
         with tempfile.TemporaryDirectory() as tmpdir:
             tool.set_workspace_dir(tmpdir)
-            result = await tool.execute(command="sleep 2", timeout=1)
-            assert result["success"] is False, "Command should timeout"
-            error_msg = result.get("error", "").lower()
-            assert "timeout" in error_msg or "timed out" in error_msg, f"Error should mention timeout, got: {result.get('error', 'N/A')}"
-            print(f"  ✓ Timeout correctly handled")
-            print(f"  ✓ Error message: {result.get('error', 'N/A')}")
-            passed += 1
+        result = await tool.execute(command="sleep 2", timeout=1)
+        assert result["success"] is False, "Command should timeout"
+        error_msg = result.get("error", "").lower()
+        assert "timeout" in error_msg or "timed out" in error_msg, f"Error should mention timeout, got: {result.get('error', 'N/A')}"
+        print(f"  ✓ Timeout correctly handled")
+        print(f"  ✓ Error message: {result.get('error', 'N/A')}")
+        passed += 1
     except Exception as e:
         print(f"  ✗ Failed: {e}")
         failed += 1
@@ -100,15 +100,15 @@ async def test_command_tool():
     try:
         with tempfile.TemporaryDirectory() as tmpdir:
             tool.set_workspace_dir(tmpdir)
-            result = await tool.execute(command="python3 -c 'import sys; print(\"stdout\"); print(\"stderr\", file=sys.stderr)'")
-            # This may succeed or fail depending on Python availability
-            if result["success"]:
-                assert "stdout" in result["stdout"], "Should capture stdout"
-                print(f"  ✓ Captured stdout: {result['stdout'].strip()}")
-                print(f"  ✓ Captured stderr: {result['stderr'].strip()}")
-            else:
-                print(f"  ⚠ Python not available, skipping")
-            passed += 1
+        result = await tool.execute(command="python3 -c 'import sys; print(\"stdout\"); print(\"stderr\", file=sys.stderr)'")
+        # This may succeed or fail depending on Python availability
+        if result["success"]:
+            assert "stdout" in result["stdout"], "Should capture stdout"
+            print(f"  ✓ Captured stdout: {result['stdout'].strip()}")
+            print(f"  ✓ Captured stderr: {result['stderr'].strip()}")
+        else:
+            print(f"  ⚠ Python not available, skipping")
+        passed += 1
     except Exception as e:
         print(f"  ✗ Failed: {e}")
         failed += 1

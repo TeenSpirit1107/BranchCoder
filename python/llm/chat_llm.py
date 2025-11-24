@@ -39,7 +39,7 @@ class AsyncChatClientWrapper:
         self.client = AsyncOpenAI(
             api_key=api_key,
             base_url=base_url,
-            timeout=60.0,
+            timeout=300.0,
         )
         self.model = model
 

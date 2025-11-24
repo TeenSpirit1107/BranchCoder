@@ -196,11 +196,11 @@ Footer line"""
             
             target_file_path = str(test_file.resolve())
             result = await tool.execute(patch_content="This is not a patch", target_file_path=target_file_path)
-            assert result["success"] is False, "Invalid patch should fail"
-            assert "error" in result, "Should return error message"
-            print(f"  ✓ Invalid patch correctly rejected")
-            print(f"  ✓ Error: {result.get('error', 'N/A')[:50]}")
-            passed += 1
+        assert result["success"] is False, "Invalid patch should fail"
+        assert "error" in result, "Should return error message"
+        print(f"  ✓ Invalid patch correctly rejected")
+        print(f"  ✓ Error: {result.get('error', 'N/A')[:50]}")
+        passed += 1
     except Exception as e:
         print(f"  ✗ Failed: {e}")
         failed += 1
