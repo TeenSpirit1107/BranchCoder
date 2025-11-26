@@ -847,6 +847,9 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
                             await this.chatPanel?.sendMessage(message.text);
                         }
                         return;
+                    case 'requestHistory':
+                        await this.chatPanel?.loadHistoryFromBackend();
+                        return;
                     case 'clearChat':
                         this.chatPanel?.clearChat();
                         return;

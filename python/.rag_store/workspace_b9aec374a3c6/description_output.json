@@ -10,7 +10,7 @@
     },
     {
       "file": "_base_network.py",
-      "description": "The file `_base_network.py` defines a base class for a neural network, focusing on core functionalities such as initialization, forward propagation, and activation functions. It relies on the `numpy` library for numerical operations. The class `_baseNetwork` encapsulates methods for computing softmax, cross-entropy loss, accuracy, and various activation functions, which are essential for training and evaluating neural networks. Additionally, a standalone function `greeting` is included for testing purposes."
+      "description": "This file, `_base_network.py`, defines a base class for a neural network model, focusing on core functionalities such as initialization, forward propagation, and activation functions. It relies on the NumPy library for numerical operations. The class `_baseNetwork` encapsulates methods for computing softmax probabilities, cross-entropy loss, accuracy, and various activation functions like sigmoid and ReLU, along with their derivatives. The file is designed to be a foundational component for building more complex neural network architectures."
     }
   ],
   "functions": [
@@ -190,7 +190,7 @@
         "two_layer_nn.TwoLayerNet._weight_init",
         "two_layer_nn.TwoLayerNet.forward"
       ],
-      "description": "Placeholder method intended for initializing network weights."
+      "description": "Placeholder function intended for initializing network weights."
     },
     {
       "file": "_base_network.py",
@@ -198,7 +198,7 @@
       "source": "    def forward(self):\n        pass\n",
       "calls": [],
       "called_by": [],
-      "description": "Placeholder method intended for implementing the forward pass of the network."
+      "description": "Placeholder function intended for implementing the forward pass of the network."
     },
     {
       "file": "_base_network.py",
@@ -292,14 +292,6 @@
         "softmax_regression.SoftmaxRegression.forward"
       ],
       "description": "Computes and returns the gradient of the ReLU function for the given input."
-    },
-    {
-      "file": "_base_network.py",
-      "qualname": "_base_network.greeting",
-      "source": "def greeting():\n    \"\"\"A simple greeting function for testing purposes.\"\"\"\n    print(\"Hello from _base_network!\")\n",
-      "calls": [],
-      "called_by": [],
-      "description": "Prints a simple greeting message for testing purposes."
     }
   ],
   "classes": [

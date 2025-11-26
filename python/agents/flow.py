@@ -1,4 +1,3 @@
-from typing import List, Dict
 from utils.logger import Logger
 from llm.chat_llm import AsyncChatClientWrapper
 from tools.tool_factory import get_tool_definitions, set_workspace_dir, execute_tool
@@ -20,9 +19,10 @@ class FlowAgent:
         self.memory = Memory(workspace_dir)
         logger.info(f"Flow agent initialized with {len(self.tools_definitions)} tools")
     
-    async def process(self, messages: List[Dict[str, str]]):
-        logger.debug(f"Processing {len(messages)} messages through flow agent")
-        await self.memory.initialize_messages(messages)
+    async def process(self, message: str, session_id: str):
+        logger.debug(f"Processing new message for session {session_id}: {message[:80]}{'...' if len(message) > 80 else ''}")
+        self.memory.add_user_message(session_id, message)
+        await self.memory.initialize_messages(session_id)
         iteration = 0
         while iteration < self.MAX_ITERATION:
             iteration += 1
@@ -60,7 +60,11 @@ class FlowAgent:
                 self.memory.add_tool_call(iteration, tool_name, tool_args)
                 self.memory.add_tool_result(iteration, tool_result)
             else:
-                yield MessageEvent(message=result.get("answer", ""))
+                answer_text = result.get("answer", "") or ""
+                if answer_text:
+                    self.memory.add_assistant_message(session_id, answer_text)
+                yield MessageEvent(message=answer_text)
+                return
 
         logger.warning(f"Reached max iterations ({self.MAX_ITERATION}), returning error message")
         error_message = "Sorry. Hit max iterations limit"

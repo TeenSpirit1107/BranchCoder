@@ -8,6 +8,7 @@ import { applyPatchToText } from './patchUtils';
 export class ChatPanel {
     private chatHistory: Array<{ role: string; content: string }> = [];
     private currentPatchSessionId: string | null = null;
+    private sessionId: string;
 
     constructor(
         private readonly webview: vscode.Webview,
@@ -16,6 +17,7 @@ export class ChatPanel {
         private readonly outputChannel?: vscode.OutputChannel
     ) {
         // Don't update here, wait for webview to be ready
+        this.sessionId = this.createSessionId();
     }
 
     public async sendMessage(userMessage: string) {
@@ -62,6 +64,7 @@ export class ChatPanel {
     public clearChat() {
         this.chatHistory = [];
         this.currentPatchSessionId = null;
+        this.sessionId = this.createSessionId();
         this.update();
     }
 
@@ -174,49 +177,15 @@ export class ChatPanel {
 
     private async callPythonAI(message: string): Promise<string> {
         return new Promise((resolve, reject) => {
-            // Get Python AI script path from configuration
-            const config = vscode.workspace.getConfiguration('aiChat');
-            let pythonPath = config.get<string>('pythonPath', '.venv/bin/python');
-            // Get extension path - use the provided extensionPath directly
-            let extPath = this.extensionPath;
-            if (!extPath) {
-                // Fallback: try to get path from extensionUri
-                if (this.extensionUri.scheme === 'file') {
-                    extPath = path.dirname(path.dirname(this.extensionUri.fsPath));
-                } else {
-                    reject(new Error('Extension path is not set and cannot be determined'));
-                    return;
-                }
+            let command;
+            try {
+                command = this.preparePythonCommand();
+            } catch (error) {
+                reject(error);
+                return;
             }
-            const defaultScriptPath = path.join(
-                extPath,
-                'python',
-                'ai_service.py'
-            );
-            console.log('Extension path:', extPath);
-            console.log('Python script path:', defaultScriptPath);
-            console.log('Script exists:', fs.existsSync(defaultScriptPath));
-            if (!fs.existsSync(defaultScriptPath)) {
-                console.error('Python script not found at:', defaultScriptPath);
-            }
-            let aiScriptPath = config.get<string>('aiScriptPath');
-            if (!aiScriptPath) {
-                aiScriptPath = defaultScriptPath;
-            }
-            // Resolve relative paths relative to extension path
-            if (!path.isAbsolute(aiScriptPath)) {
-                aiScriptPath = path.join(extPath, aiScriptPath);
-            }
-            console.log('Using Python script:', aiScriptPath);
+            const { resolvedPythonPath, aiScriptPath, workspaceDir } = command;
 
-            // Resolve relative Python path relative to extension path
-            let resolvedPythonPath = pythonPath;
-            if (!path.isAbsolute(pythonPath)) {
-                resolvedPythonPath = path.join(extPath, pythonPath);
-            }
-            console.log('Using Python interpreter:', resolvedPythonPath);
-
-            // Spawn Python process
             const pythonProcess = spawn(resolvedPythonPath, [aiScriptPath], {
                 stdio: ['pipe', 'pipe', 'pipe']
             });
@@ -232,19 +201,10 @@ export class ChatPanel {
                 this.outputChannel.appendLine('='.repeat(80));
             }
 
-            // Get workspace directory
-            const workspaceFolders = vscode.workspace.workspaceFolders;
-            const workspaceDir = workspaceFolders && workspaceFolders.length > 0 
-                ? workspaceFolders[0].uri.fsPath 
-                : undefined;
-
-            // Send message to Python process
             const requestData: any = {
                 message: message,
-                history: this.chatHistory.slice(0, -1) // Send history except current message
+                session_id: this.sessionId
             };
-            
-            // Add workspace_dir if available
             if (workspaceDir) {
                 requestData.workspace_dir = workspaceDir;
             }
@@ -360,9 +320,130 @@ export class ChatPanel {
         });
     }
 
+    private preparePythonCommand() {
+        const config = vscode.workspace.getConfiguration('aiChat');
+        let pythonPath = config.get<string>('pythonPath', '.venv/bin/python');
+        let extPath = this.extensionPath;
+        if (!extPath) {
+            if (this.extensionUri.scheme === 'file') {
+                extPath = path.dirname(path.dirname(this.extensionUri.fsPath));
+            } else {
+                throw new Error('Extension path is not set and cannot be determined');
+            }
+        }
+
+        const defaultScriptPath = path.join(extPath, 'python', 'ai_service.py');
+        if (!fs.existsSync(defaultScriptPath)) {
+            console.error('Python script not found at:', defaultScriptPath);
+        }
+
+        let aiScriptPath = config.get<string>('aiScriptPath');
+        if (!aiScriptPath) {
+            aiScriptPath = defaultScriptPath;
+        }
+        if (!path.isAbsolute(aiScriptPath)) {
+            aiScriptPath = path.join(extPath, aiScriptPath);
+        }
+
+        let resolvedPythonPath = pythonPath;
+        if (!path.isAbsolute(pythonPath)) {
+            resolvedPythonPath = path.join(extPath, pythonPath);
+        }
+
+        const workspaceFolders = vscode.workspace.workspaceFolders;
+        const workspaceDir = workspaceFolders && workspaceFolders.length > 0
+            ? workspaceFolders[0].uri.fsPath
+            : undefined;
+
+        return { resolvedPythonPath, aiScriptPath, workspaceDir };
+    }
+
+    private requestHistory(): Promise<void> {
+        return new Promise((resolve, reject) => {
+            let command;
+            try {
+                command = this.preparePythonCommand();
+            } catch (error) {
+                reject(error);
+                return;
+            }
+
+            const { resolvedPythonPath, aiScriptPath, workspaceDir } = command;
+            const pythonProcess = spawn(resolvedPythonPath, [aiScriptPath], {
+                stdio: ['pipe', 'pipe', 'pipe']
+            });
+
+            let stdout = '';
+            let stderr = '';
+
+            pythonProcess.stdout.on('data', (data: Buffer) => {
+                stdout += data.toString();
+            });
+
+            pythonProcess.stderr.on('data', (data: Buffer) => {
+                const log = data.toString();
+                stderr += log;
+                if (this.outputChannel) {
+                    this.outputChannel.append(log);
+                }
+            });
+
+            const requestData: any = {
+                request_type: 'history',
+                session_id: this.sessionId
+            };
+            if (workspaceDir) {
+                requestData.workspace_dir = workspaceDir;
+            }
+
+            pythonProcess.stdin.write(JSON.stringify(requestData));
+            pythonProcess.stdin.end();
+
+            pythonProcess.on('close', (code: number | null) => {
+                if (code === 0) {
+                    const lines = stdout.split('\n').map(line => line.trim()).filter(Boolean);
+                    for (const line of lines) {
+                        try {
+                            const msg = JSON.parse(line);
+                            if (msg.type === 'history') {
+                                this.webview.postMessage({
+                                    command: 'loadHistory',
+                                    history: Array.isArray(msg.history) ? msg.history : []
+                                });
+                                resolve();
+                                return;
+                            }
+                        } catch (error) {
+                            continue;
+                        }
+                    }
+                    resolve();
+                } else {
+                    reject(new Error(stderr || `Python process exited with code ${code}`));
+                }
+            });
+
+            pythonProcess.on('error', (error: Error) => {
+                reject(error);
+            });
+        });
+    }
+
+    public async loadHistoryFromBackend(): Promise<void> {
+        try {
+            await this.requestHistory();
+        } catch (error: any) {
+            console.error('Failed to load history:', error);
+            if (this.outputChannel) {
+                this.outputChannel.appendLine(`[ERROR] Failed to load history: ${error.message}`);
+            }
+        }
+    }
+
     public update() {
         const webview = this.webview;
         webview.html = this.getHtmlForWebview(webview);
+        this.loadHistoryFromBackend().catch(() => {});
     }
 
     private getHtmlForWebview(webview: vscode.Webview) {
@@ -431,6 +512,7 @@ export class ChatPanel {
                     const acceptPatchButton = document.getElementById('acceptPatchButton');
                     const rejectPatchButton = document.getElementById('rejectPatchButton');
                     let currentPatchSessionId = null;
+                    let historyLoaded = false;
                     
                     // Markdown renderer function
                     function renderMarkdown(text) {
@@ -459,6 +541,51 @@ export class ChatPanel {
                         chatMessages.scrollTop = chatMessages.scrollHeight;
                     }
                     
+                    function renderEvent(evt) {
+                        const msgDiv = document.createElement('div');
+                        let className = 'message';
+
+                        if (evt.type === 'user_message') {
+                            className += ' user';
+                        } else {
+                            className += ' assistant';
+                        }
+
+                        if (evt.type === 'tool_call') {
+                            className += ' tool-call';
+                        } else if (evt.type === 'tool_result') {
+                            className += ' tool-result';
+                        } else if (evt.type === 'error') {
+                            className += ' error';
+                        }
+
+                        msgDiv.className = className;
+
+                        let contentHtml = '';
+                        if (evt.type === 'tool_call' || evt.type === 'tool_result') {
+                            const toolName = evt.tool_name || 'unknown';
+                            const toolLabel = evt.type === 'tool_call' ? '🔧 调用工具' : '✅ 工具完成';
+                            contentHtml = '<div class="tool-header"><strong>' + toolLabel + ':</strong> <code>' + toolName + '</code></div>';
+                            if (evt.message) {
+                                contentHtml += '<div class="tool-message">' + renderMarkdown(evt.message) + '</div>';
+                            }
+                        } else if (evt.type === 'user_message') {
+                            contentHtml = renderMarkdown(evt.message || '');
+                        } else if (evt.type === 'error') {
+                            contentHtml = '<strong>Error:</strong> ' + renderMarkdown(evt.message || '');
+                        } else {
+                            if (evt.type === 'notification_message') {
+                                contentHtml = '<em>' + (evt.message || 'Thinking...') + '</em>';
+                            } else {
+                                contentHtml = renderMarkdown(evt.message || '');
+                            }
+                        }
+
+                        msgDiv.innerHTML = '<div class="message-content">' + contentHtml + '</div>';
+                        chatMessages.appendChild(msgDiv);
+                        scrollToBottom();
+                    }
+                    
                     function sendMessage() {
                         const text = messageInput.value.trim();
                         if (text) {
@@ -482,58 +609,29 @@ export class ChatPanel {
                     window.addEventListener('message', event => {
                         const data = event.data;
                         switch (data.command) {
-                            case 'addEvent':
-                                // Directly render backend event
-                                const evt = data.event;
-                                const msgDiv = document.createElement('div');
-                                let className = 'message';
-                                
-                                // Determine message role and CSS class
-                                if (evt.type === 'user_message') {
-                                    className += ' user';
-                                } else {
-                                    className += ' assistant';
-                                }
-                                
-                                // Add CSS class based on event type
-                                if (evt.type === 'tool_call') {
-                                    className += ' tool-call';
-                                } else if (evt.type === 'tool_result') {
-                                    className += ' tool-result';
-                                } else if (evt.type === 'error') {
-                                    className += ' error';
-                                }
-                                
-                                msgDiv.className = className;
-                                
-                                // Build content based on event type
-                                let contentHtml = '';
-                                if (evt.type === 'tool_call' || evt.type === 'tool_result') {
-                                    const toolName = evt.tool_name || 'unknown';
-                                    const toolLabel = evt.type === 'tool_call' ? '🔧 调用工具' : '✅ 工具完成';
-                                    contentHtml = \`<div class="tool-header"><strong>\${toolLabel}:</strong> <code>\${toolName}</code></div>\`;
-                                    if (evt.message) {
-                                        contentHtml += \`<div class="tool-message">\${renderMarkdown(evt.message)}</div>\`;
-                                    }
-                                } else if (evt.type === 'user_message') {
-                                    // User message
-                                    contentHtml = renderMarkdown(evt.message || '');
-                                } else if (evt.type === 'error') {
-                                    // Error message
-                                    contentHtml = '<strong>Error:</strong> ' + renderMarkdown(evt.message || '');
-                                } else {
-                                    // Normal message (notification_message or final_message)
-                                    if (evt.type === 'notification_message') {
-                                        contentHtml = '<em>' + (evt.message || 'Thinking...') + '</em>';
-                                    } else {
-                                        contentHtml = renderMarkdown(evt.message || '');
-                                    }
-                                }
-                                
-                                msgDiv.innerHTML = \`<div class="message-content">\${contentHtml}</div>\`;
-                                chatMessages.appendChild(msgDiv);
-                                scrollToBottom();
+                            case 'addEvent': {
+                                renderEvent(data.event);
                                 break;
+                            }
+                            case 'loadHistory': {
+                                if (historyLoaded) {
+                                    break;
+                                }
+                                historyLoaded = true;
+                                if (chatMessages) {
+                                    chatMessages.innerHTML = '';
+                                }
+                                const entries = Array.isArray(data.history) ? data.history : [];
+                                entries.forEach(entry => {
+                                    const evt = {
+                                        type: entry.role === 'user' ? 'user_message' : 'notification_message',
+                                        message: entry.content || '',
+                                        role: entry.role
+                                    };
+                                    renderEvent(evt);
+                                });
+                                break;
+                            }
                             case 'focusInput':
                                 messageInput.focus();
                                 break;
@@ -805,6 +903,10 @@ export class ChatPanel {
             text += possible.charAt(Math.floor(Math.random() * possible.length));
         }
         return text;
+    }
+
+    private createSessionId(): string {
+        return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
     }
 }
 

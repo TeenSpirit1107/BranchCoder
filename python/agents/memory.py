@@ -1,6 +1,7 @@
 import json
 from datetime import datetime
-from typing import List, Dict
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 from utils.logger import Logger
 from tools.tool_factory import execute_tool
 from models import ToolResultEvent, ToolCallEvent
@@ -8,13 +9,83 @@ from prompts.flow_prompt import SYSTEM_PROMPT
 
 logger = Logger('flow.memory', log_to_file=False)
 
+DEFAULT_HISTORY_DIR = Path.home() / ".vscode-branch-coder"
+DEFAULT_HISTORY_FILE = DEFAULT_HISTORY_DIR / "conversation_history.json"
+MAX_HISTORY_MESSAGES = 50
+
 
 class Memory:
 
-    def __init__(self, workspace_dir: str):
+    def __init__(self, workspace_dir: str, history_file: Optional[str] = None):
         self.workspace_dir = workspace_dir
-        self.messages: List[Dict[str, str]] = []
+        self.history_file = Path(history_file) if history_file else DEFAULT_HISTORY_FILE
+        self._ensure_history_dir()
+        self._histories: Dict[str, List[Dict[str, Any]]] = {}
+        self._load_all_histories()
+        self.messages: List[Dict[str, Any]] = []
     
+    def _ensure_history_dir(self) -> None:
+        try:
+            self.history_file.parent.mkdir(parents=True, exist_ok=True)
+        except Exception as exc:
+            logger.error(f"Failed to create history directory: {exc}")
+
+    def _load_all_histories(self) -> None:
+        try:
+            if self.history_file.exists():
+                with open(self.history_file, 'r', encoding='utf-8') as f:
+                    self._histories = json.load(f)
+                logger.debug(f"Loaded {len(self._histories)} conversation histories")
+            else:
+                self._histories = {}
+                logger.debug("No existing history file found, starting fresh")
+        except Exception as exc:
+            logger.error(f"Failed to load history file: {exc}")
+            self._histories = {}
+
+    def _save_all_histories(self) -> None:
+        try:
+            with open(self.history_file, 'w', encoding='utf-8') as f:
+                json.dump(self._histories, f, ensure_ascii=False, indent=2)
+            logger.debug(f"Saved {len(self._histories)} conversation histories")
+        except Exception as exc:
+            logger.error(f"Failed to save history file: {exc}")
+
+    def _add_history_entry(self, role: str, content: Any, session_id: str) -> None:
+        if session_id not in self._histories:
+            self._histories[session_id] = []
+        if isinstance(content, dict):
+            entry: Dict[str, Any] = dict(content)
+            entry["role"] = entry.get("role") or role
+            if "content" not in entry:
+                entry["content"] = ""
+        else:
+            entry = {"role": role, "content": content if content is not None else ""}
+        self._histories[session_id].append(entry)
+
+        if len(self._histories[session_id]) > MAX_HISTORY_MESSAGES:
+            self._histories[session_id] = self._histories[session_id][-MAX_HISTORY_MESSAGES:]
+
+        self._save_all_histories()
+        logger.debug(f"Added {role} message to session {session_id} (total: {len(self._histories[session_id])})")
+
+    def get_history(self, session_id: str = "default") -> List[Dict[str, Any]]:
+        return self._histories.get(session_id, []).copy()
+
+    def clear_history(self, session_id: str = "default") -> None:
+        if session_id in self._histories:
+            del self._histories[session_id]
+            self._save_all_histories()
+            logger.info(f"Cleared history for session {session_id}")
+
+    def clear_all_histories(self) -> None:
+        self._histories = {}
+        self._save_all_histories()
+        logger.info("Cleared all conversation histories")
+
+    def get_session_history(self, session_id: str) -> List[Dict[str, Any]]:
+        return self.get_history(session_id)
+
     async def generate_system_prompt(self) -> str:
         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         workspace_structure = ''
@@ -39,14 +110,25 @@ class Memory:
             workspace_structure=workspace_structure
         )
     
-    async def initialize_messages(self, initial_messages: List[Dict[str, str]]) -> List[Dict[str, str]]:
+    async def initialize_messages(self, session_id: str) -> List[Dict[str, Any]]:
         system_prompt = await self.generate_system_prompt()
+        session_history = self.get_history(session_id)
         self.messages = [
             {"role": "system", "content": system_prompt},
-            *initial_messages
+            *session_history
         ]
         return self.messages
-    
+
+    def add_user_message(self, session_id: str, content: str) -> None:
+        self._add_history_entry("user", content, session_id)
+
+    def add_assistant_message(self, session_id: str, content: str) -> None:
+        self._add_history_entry("assistant", content, session_id)
+        self.messages.append({
+            "role": "assistant",
+            "content": content
+        })
+
     def add_tool_call(self, iteration: int, tool_name: str, tool_args: Dict) -> None:
         self.messages.append({
             "role": "assistant",
@@ -68,5 +150,5 @@ class Memory:
             "tool_call_id": f"call_{iteration}"
         })
     
-    def get_messages(self) -> List[Dict[str, str]]:
+    def get_messages(self) -> List[Dict[str, Any]]:
         return self.messages
