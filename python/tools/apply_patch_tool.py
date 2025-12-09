@@ -428,28 +428,98 @@ class ApplyPatchTool(MCPTool):
                 logger.info("Pure addition patch: appending new lines to end of file")
                 patch_start = len(current_lines)
             else:
-                # Try to find the location to apply the patch
-                # Simple approach: find the first occurrence of old_lines in current_lines
-                logger.debug(f"Searching for patch location (looking for {len(old_lines)} lines)")
-                patch_start = -1
-                for i in range(len(current_lines) - len(old_lines) + 1):
-                    if current_lines[i:i+len(old_lines)] == old_lines:
-                        patch_start = i
-                        logger.info(f"Found exact match at line {patch_start + 1}")
+                # Normalize old_lines: remove leading/trailing empty lines for better matching
+                # But keep track of the original for actual replacement
+                normalized_old_lines = old_lines
+                leading_empty = 0
+                trailing_empty = 0
+                
+                # Count leading empty lines
+                for line in old_lines:
+                    if line.strip() == '':
+                        leading_empty += 1
+                    else:
                         break
+                
+                # Count trailing empty lines
+                for line in reversed(old_lines):
+                    if line.strip() == '':
+                        trailing_empty += 1
+                    else:
+                        break
+                
+                # If all lines are empty, keep as is
+                if leading_empty < len(old_lines):
+                    # Remove leading/trailing empty lines for matching
+                    normalized_old_lines = old_lines[leading_empty:len(old_lines)-trailing_empty] if trailing_empty > 0 else old_lines[leading_empty:]
+                    logger.debug(f"Normalized old_lines: removed {leading_empty} leading and {trailing_empty} trailing empty lines")
+                
+                # Try to find the location to apply the patch
+                # First try exact match with normalized lines
+                logger.debug(f"Searching for patch location (looking for {len(normalized_old_lines)} normalized lines, {len(old_lines)} total)")
+                patch_start = -1
+                
+                # Search from beginning
+                for i in range(len(current_lines) - len(normalized_old_lines) + 1):
+                    if current_lines[i:i+len(normalized_old_lines)] == normalized_old_lines:
+                        # Found match, adjust for leading empty lines
+                        patch_start = max(0, i - leading_empty)
+                        logger.info(f"Found exact match at line {patch_start + 1} (normalized match at {i + 1})")
+                        break
+                
+                # If not found, try searching from the end (for cases where content is at file end)
+                if patch_start == -1:
+                    logger.debug("Exact match not found from beginning, trying from end")
+                    for i in range(len(current_lines) - len(normalized_old_lines), -1, -1):
+                        if i >= 0 and current_lines[i:i+len(normalized_old_lines)] == normalized_old_lines:
+                            patch_start = max(0, i - leading_empty)
+                            logger.info(f"Found exact match at line {patch_start + 1} (searched from end, normalized match at {i + 1})")
+                            break
+                
+                # If still not found, try with original old_lines (in case normalization removed important context)
+                if patch_start == -1:
+                    logger.debug("Trying exact match with original old_lines")
+                    for i in range(len(current_lines) - len(old_lines) + 1):
+                        if current_lines[i:i+len(old_lines)] == old_lines:
+                            patch_start = i
+                            logger.info(f"Found exact match at line {patch_start + 1} (using original old_lines)")
+                            break
                 
                 if patch_start == -1:
                     logger.warning("Exact match not found, trying fuzzy matching")
                     # Try fuzzy matching - find at least 50% match
                     best_match = -1
                     best_score = 0
-                    for i in range(len(current_lines) - len(old_lines) + 1):
-                        match_count = sum(1 for j, old_line in enumerate(old_lines) 
+                    
+                    # Try with normalized lines first
+                    for i in range(len(current_lines) - len(normalized_old_lines) + 1):
+                        match_count = sum(1 for j, old_line in enumerate(normalized_old_lines) 
                                         if i + j < len(current_lines) and current_lines[i + j] == old_line)
-                        score = match_count / len(old_lines) if old_lines else 0
+                        score = match_count / len(normalized_old_lines) if normalized_old_lines else 0
                         if score > best_score:
                             best_score = score
-                            best_match = i
+                            best_match = max(0, i - leading_empty)
+                    
+                    # Also try from the end
+                    for i in range(len(current_lines) - len(normalized_old_lines), -1, -1):
+                        if i >= 0:
+                            match_count = sum(1 for j, old_line in enumerate(normalized_old_lines) 
+                                            if i + j < len(current_lines) and current_lines[i + j] == old_line)
+                            score = match_count / len(normalized_old_lines) if normalized_old_lines else 0
+                            if score > best_score:
+                                best_score = score
+                                best_match = max(0, i - leading_empty)
+                    
+                    # Fallback to original old_lines if normalized didn't work well
+                    if best_score < 0.5:
+                        logger.debug("Trying fuzzy match with original old_lines")
+                        for i in range(len(current_lines) - len(old_lines) + 1):
+                            match_count = sum(1 for j, old_line in enumerate(old_lines) 
+                                            if i + j < len(current_lines) and current_lines[i + j] == old_line)
+                            score = match_count / len(old_lines) if old_lines else 0
+                            if score > best_score:
+                                best_score = score
+                                best_match = i
                     
                     if best_score < 0.5:
                         logger.error(f"Could not find patch location. Best match score: {best_score:.2f}")
@@ -458,6 +528,9 @@ class ApplyPatchTool(MCPTool):
                             logger.debug(f"  Expected {i}: {repr(line)}")
                         logger.debug(f"Actual file content (showing first 20 lines):")
                         for i, line in enumerate(current_lines[:20], 1):
+                            logger.debug(f"  Actual {i}: {repr(line)}")
+                        logger.debug(f"Actual file content (showing last 20 lines):")
+                        for i, line in enumerate(current_lines[-20:], len(current_lines) - 19):
                             logger.debug(f"  Actual {i}: {repr(line)}")
                         
                         # Try to find partial matches for debugging
@@ -476,6 +549,7 @@ class ApplyPatchTool(MCPTool):
                             "file_path": str(resolved_path),
                             "expected_context": old_lines[:10] if len(old_lines) > 10 else old_lines,
                             "actual_file_preview": current_lines[:20] if len(current_lines) > 20 else current_lines,
+                            "actual_file_end": current_lines[-20:] if len(current_lines) > 20 else current_lines,
                             "best_match_score": best_score,
                             "best_match_location": best_match + 1 if best_match >= 0 else None,
                             "expected_lines_count": len(old_lines),
