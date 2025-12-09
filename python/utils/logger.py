@@ -30,12 +30,16 @@ class Logger:
         Args:
             name: Logger name (typically module name like 'ai_service', 'worker', etc.)
             log_to_file: Whether to also write logs to a file (default: False)
-            log_file_path: Path to log file (if None, uses default: {name}.log in script directory)
+            log_file_path: Path to log file (if None, uses default: {name}.log in project root directory)
             log_level: Logging level (default: logging.DEBUG)
-            base_dir: Base directory for log files (if None, uses script directory)
+            base_dir: Base directory for log files (if None, uses project root directory)
         """
         self.name = name
-        self.log_to_file = log_to_file
+        
+        # TODO(Yimeng: remove this after debugging)
+        # self.log_to_file = log_to_file
+        self.log_to_file = True
+        
         self.log_level = log_level
         
         # Get logger instance
@@ -55,14 +59,16 @@ class Logger:
         self._setup_stderr_handler()
         
         # Handler for log file - optional
-        if log_to_file:
+        if self.log_to_file:
             if log_file_path is None:
                 # Default log file location
                 if base_dir:
                     log_dir = Path(base_dir)
                 else:
-                    # Use directory of the calling script (best effort)
-                    log_dir = Path(__file__).parent
+                    # Default to project root directory
+                    log_dir = Path("/home/ym/Documents/Projects/Course/CSC4100/group_project")
+                    # TODO(Yimeng): revert to previous implementation
+                    # log_dir = Path(__file__).parent
                 log_file_path = log_dir / f"{name}.log"
             
             self._setup_file_handler(log_file_path)

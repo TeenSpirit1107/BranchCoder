@@ -453,13 +453,34 @@ class ApplyPatchTool(MCPTool):
                     
                     if best_score < 0.5:
                         logger.error(f"Could not find patch location. Best match score: {best_score:.2f}")
-                        logger.debug(f"Expected context (first 5 lines): {old_lines[:5] if len(old_lines) > 5 else old_lines}")
+                        logger.debug(f"Expected context ({len(old_lines)} lines, showing first 10):")
+                        for i, line in enumerate(old_lines[:10], 1):
+                            logger.debug(f"  Expected {i}: {repr(line)}")
+                        logger.debug(f"Actual file content (showing first 20 lines):")
+                        for i, line in enumerate(current_lines[:20], 1):
+                            logger.debug(f"  Actual {i}: {repr(line)}")
+                        
+                        # Try to find partial matches for debugging
+                        if best_match >= 0:
+                            logger.debug(f"Best match location: line {best_match + 1}")
+                            logger.debug(f"Best match context:")
+                            for i in range(min(5, len(old_lines))):
+                                if best_match + i < len(current_lines):
+                                    match_indicator = "✓" if i < len(old_lines) and best_match + i < len(current_lines) and current_lines[best_match + i] == old_lines[i] else "✗"
+                                    logger.debug(f"  {match_indicator} Expected: {repr(old_lines[i]) if i < len(old_lines) else 'N/A'}")
+                                    logger.debug(f"    Actual:   {repr(current_lines[best_match + i]) if best_match + i < len(current_lines) else 'N/A'}")
+                        
                         return {
                             "success": False,
                             "error": f"Could not find patch location in file. Expected context not found.",
                             "file_path": str(resolved_path),
-                            "expected_context": old_lines[:5] if len(old_lines) > 5 else old_lines,
-                            "best_match_score": best_score
+                            "expected_context": old_lines[:10] if len(old_lines) > 10 else old_lines,
+                            "actual_file_preview": current_lines[:20] if len(current_lines) > 20 else current_lines,
+                            "best_match_score": best_score,
+                            "best_match_location": best_match + 1 if best_match >= 0 else None,
+                            "expected_lines_count": len(old_lines),
+                            "actual_lines_count": len(current_lines),
+                            "suggestion": "The file content may have changed since the patch was generated, or there may be whitespace/formatting differences. Please verify the patch matches the current file state."
                         }
                     else:
                         patch_start = best_match
