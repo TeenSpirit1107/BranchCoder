@@ -8,6 +8,8 @@ node_modules
 **/.cursor/
 **/__pycache__/
 
+python/.rag_store/*
+
 # Python
 __pycache__/
 *.py[cod]
