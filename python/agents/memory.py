@@ -51,23 +51,20 @@ class Memory:
         except Exception as exc:
             logger.error(f"Failed to save history file: {exc}")
 
-    def _add_history_entry(self, role: str, content: Any, session_id: str) -> None:
+    def _add_history_entry(self, session_id: str, entry: Dict[str, Any]) -> None:
         if session_id not in self._histories:
             self._histories[session_id] = []
-        if isinstance(content, dict):
-            entry: Dict[str, Any] = dict(content)
-            entry["role"] = entry.get("role") or role
-            if "content" not in entry:
-                entry["content"] = ""
-        else:
-            entry = {"role": role, "content": content if content is not None else ""}
-        self._histories[session_id].append(entry)
+        entry_copy = dict(entry)
+        self._histories[session_id].append(entry_copy)
 
         if len(self._histories[session_id]) > MAX_HISTORY_MESSAGES:
             self._histories[session_id] = self._histories[session_id][-MAX_HISTORY_MESSAGES:]
 
         self._save_all_histories()
-        logger.debug(f"Added {role} message to session {session_id} (total: {len(self._histories[session_id])})")
+        logger.debug(
+            f"Added {entry_copy.get('role', 'unknown')} message to session {session_id} "
+            f"(total: {len(self._histories[session_id])})"
+        )
 
     def get_history(self, session_id: str = "default") -> List[Dict[str, Any]]:
         return self._histories.get(session_id, []).copy()
@@ -120,17 +117,17 @@ class Memory:
         return self.messages
 
     def add_user_message(self, session_id: str, content: str) -> None:
-        self._add_history_entry("user", content, session_id)
+        self._add_history_entry(session_id, {"role": "user", "content": content})
 
     def add_assistant_message(self, session_id: str, content: str) -> None:
-        self._add_history_entry("assistant", content, session_id)
+        self._add_history_entry(session_id, {"role": "assistant", "content": content})
         self.messages.append({
             "role": "assistant",
             "content": content
         })
 
-    def add_tool_call(self, iteration: int, tool_name: str, tool_args: Dict) -> None:
-        self.messages.append({
+    def add_tool_call(self, session_id: str, iteration: int, tool_name: str, tool_args: Dict) -> None:
+        tool_call_message = {
             "role": "assistant",
             "content": None,
             "tool_calls": [{
@@ -141,14 +138,18 @@ class Memory:
                     "arguments": json.dumps(tool_args)
                 }
             }]
-        })
+        }
+        self.messages.append(tool_call_message)
+        self._add_history_entry(session_id, tool_call_message)
     
-    def add_tool_result(self, iteration: int, tool_result: Dict) -> None:
-        self.messages.append({
+    def add_tool_result(self, session_id: str, iteration: int, tool_result: Dict) -> None:
+        tool_result_message = {
             "role": "tool",
             "content": json.dumps(tool_result),
             "tool_call_id": f"call_{iteration}"
-        })
+        }
+        self.messages.append(tool_result_message)
+        self._add_history_entry(session_id, tool_result_message)
     
     def get_messages(self) -> List[Dict[str, Any]]:
         return self.messages
