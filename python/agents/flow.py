@@ -50,6 +50,7 @@ class FlowAgent:
                 tool_args = dict(result.get("tool_args") or {})
 
                 if tool_name == self.PARALLEL_TOOL_NAME:
+                    # TODO(Yimeng): fix redundant deepcopy (shouldn't have copied when init)
                     context_messages = copy.deepcopy(self.memory.get_messages())
                     tool_args.setdefault("context_messages", context_messages)
                     tool_args.setdefault("parent_session_id", session_id)
@@ -73,6 +74,7 @@ class FlowAgent:
                         yield event
                         return
 
+                # TODO(Yimeng): move this into for loop
                 if tool_result is None:
                     tool_result = {"error": "Tool execution returned no result"}
 
