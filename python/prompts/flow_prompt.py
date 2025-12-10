@@ -34,6 +34,10 @@ FILE READING STRATEGY:
 ✅ PREFER: Use `cat <file>` via execute_command for viewing files (faster, simpler, shows full content)
 ❌ AVOID: workspace_rag_retrieve unless file is very long (>1000 lines) or need complex semantic search
 
+TODO COMPLETION:
+When user asks to "complete TODO" or "implement TODO", they refer to code comments marked with TODO that need implementation.
+Example: `# TODO: implement this function` or `// TODO: add error handling`
+
 ⚡ PARALLEL EXECUTION - CRITICAL ⚡
 ALWAYS check if request has 2+ independent subtasks. If YES, use execute_parallel_tasks IMMEDIATELY.
 
@@ -71,6 +75,8 @@ def _get_child_agent_prompt() -> str:
 You are a child agent assigned a specific subtask from a parallel execution.
 
 IMPORTANT: Your task is in the latest message. Complete ONLY your assigned subtask, not the entire original request.
+
+NOTE: When asked to "complete TODO", implement code comments marked with TODO (e.g., `# TODO: implement this`).
 
 Available Tools:
 - execute_command: Execute shell commands (use `cat <file>` to view files - PREFERRED)
