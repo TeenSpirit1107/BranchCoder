@@ -1,16 +1,18 @@
 import json
 import sys
 import asyncio
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from dataclasses import asdict
 from utils.logger import Logger
-from agents.flow import FlowAgent
+from agents.flow import ReActFlow
+from agents.planact_flow import PlanActFlow
 
 logger = Logger('ai_service', log_to_file=False)
 
 # Global flow agent (lazy initialization on first request)
 flow_agent = None
 flow_agent_workspace_dir = None
+flow_agent_type = None  # Track current agent type
 
 def _message_to_dict(message: Any) -> Dict[str, Any]:
     """
@@ -35,23 +37,48 @@ def _message_to_dict(message: Any) -> Dict[str, Any]:
             # Fallback: try to convert to dict
             return dict(message) if hasattr(message, '__dict__') else {"type": "unknown", "content": str(message)}
 
-async def ensure_flow_agent(workspace_dir: str) -> FlowAgent:
-    global flow_agent, flow_agent_workspace_dir
-    if flow_agent is None or flow_agent_workspace_dir != workspace_dir:
+async def ensure_flow_agent(workspace_dir: str, agent_type: str = "react") -> ReActFlow:
+    """
+    Ensure flow agent is initialized with the specified type.
+    
+    Args:
+        workspace_dir: Workspace directory path
+        agent_type: Type of agent to use - "react" or "planact" (default: "react")
+        
+    Returns:
+        Initialized flow agent instance
+    """
+    global flow_agent, flow_agent_workspace_dir, flow_agent_type
+    
+    # Reinitialize if workspace or agent type changed
+    if flow_agent is None or flow_agent_workspace_dir != workspace_dir or flow_agent_type != agent_type:
         try:
-            flow_agent = FlowAgent(workspace_dir)
+            if agent_type.lower() == "planact":
+                flow_agent = PlanActFlow(workspace_dir)
+                logger.info(f"PlanActFlow agent initialized for workspace: {workspace_dir}")
+            else:  # Default to react
+                flow_agent = ReActFlow(workspace_dir)
+                logger.info(f"ReActFlow agent initialized for workspace: {workspace_dir}")
+            
             flow_agent_workspace_dir = workspace_dir
-            logger.info(f"Flow agent initialized successfully for workspace: {workspace_dir}")
+            flow_agent_type = agent_type
         except Exception as e:
             logger.error(f"Failed to initialize flow agent: {e}", exc_info=True)
             flow_agent = None
             raise RuntimeError(f"Flow agent initialization failed: {e}")
+    
     if flow_agent is None:
         raise RuntimeError("Flow agent is not initialized")
+    
     return flow_agent
 
 
-async def get_ai_response(message: str, session_id: str = "default", workspace_dir: str = None):
+async def get_ai_response(
+    message: str, 
+    session_id: str = "default", 
+    workspace_dir: str = None,
+    agent_type: str = "react"
+):
     """
     Process the user message by delegating to FlowAgent, which owns the conversation context.
     This is an async generator that yields streamed messages.
@@ -60,16 +87,17 @@ async def get_ai_response(message: str, session_id: str = "default", workspace_d
         message: The current user message
         session_id: Session identifier for conversation history (default: "default")
         workspace_dir: Optional workspace directory (used for RAG tool initialization and system prompt)
+        agent_type: Type of agent to use - "react" or "planact" (default: "react")
     
     Yields:
         Dict with message type and content for streaming to frontend
     """
-    logger.debug(f"Processing AI request - message length: {len(message)}, session: {session_id}")
+    logger.debug(f"Processing AI request - message length: {len(message)}, session: {session_id}, agent_type: {agent_type}")
     
     if not workspace_dir:
         raise ValueError("workspace_dir is required for FlowAgent initialization")
 
-    agent = await ensure_flow_agent(workspace_dir)
+    agent = await ensure_flow_agent(workspace_dir, agent_type)
 
     try:
         logger.info(f"Processing message: {message[:50]}{'...' if len(message) > 50 else ''}")
@@ -85,10 +113,21 @@ async def get_ai_response(message: str, session_id: str = "default", workspace_d
         raise
 
 
-async def get_session_history(session_id: str, workspace_dir: str):
+async def get_session_history(session_id: str, workspace_dir: str, agent_type: str = "react"):
+    """
+    Get session history from the flow agent.
+    
+    Args:
+        session_id: Session identifier
+        workspace_dir: Workspace directory path
+        agent_type: Type of agent to use - "react" or "planact" (default: "react")
+        
+    Returns:
+        Session history
+    """
     if not workspace_dir:
         raise ValueError("workspace_dir is required for FlowAgent initialization")
-    agent = await ensure_flow_agent(workspace_dir)
+    agent = await ensure_flow_agent(workspace_dir, agent_type)
     history = agent.memory.get_session_history(session_id)
     return history
 
@@ -117,20 +156,22 @@ async def async_main():
         session_id = data.get("session_id", "default")  # Optional session ID
         workspace_dir = data.get("workspace_dir", None)  # Optional workspace directory
         request_type = data.get("request_type", "response")
+        # DEBUG: Hard-coded to planact for testing until frontend implements agent selection
+        agent_type = "planact"  # data.get("agent_type", "react")  # TODO(Yimeng): Uncomment when frontend is ready
         
         if request_type == "response":
             if not message:
                 logger.error("No message provided in input data")
                 raise ValueError("No message provided")
         
-        logger.info(f"Processing request with message length: {len(message)}, session: {session_id}")
+        logger.info(f"Processing request with message length: {len(message)}, session: {session_id}, agent_type: {agent_type}")
         
         if request_type == "response":
-            async for msg in get_ai_response(message, session_id, workspace_dir):
+            async for msg in get_ai_response(message, session_id, workspace_dir, agent_type):
                 output_line = json.dumps(msg, ensure_ascii=False)
                 print(output_line, flush=True)
         elif request_type == "history":
-            history = await get_session_history(session_id, workspace_dir)
+            history = await get_session_history(session_id, workspace_dir, agent_type)
             output_line = json.dumps({
                 "type": "history",
                 "session_id": session_id,
