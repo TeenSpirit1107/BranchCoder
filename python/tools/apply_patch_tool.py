@@ -5,7 +5,9 @@ Apply Patch Tool - Apply unified diff patches to files
 
 import os
 import re
-from typing import Dict, Any, Optional, List, Tuple
+import hashlib
+import json
+from typing import Dict, Any, Optional, List, Tuple, Set
 from pathlib import Path
 from datetime import datetime
 from utils.logger import Logger
@@ -101,6 +103,268 @@ PATCH_SAVE_DIR = Path("/home/ym/Documents/Projects/Course/CSC4100/group_project/
 
 # Configuration for patch checking
 FUZZY_MATCH_THERSHOLD = 0.9
+
+# Configuration for patch history tracking
+ENABLE_PATCH_HISTORY = True  # Set to False to disable patch history tracking
+PATCH_HISTORY_FILE = Path("/home/ym/Documents/Projects/Course/CSC4100/group_project/BranchCoder/logs/patch_history.json")
+
+
+def _compute_file_hash(file_path: Path) -> str:
+    """
+    Compute SHA256 hash of file content.
+    
+    Args:
+        file_path: Path to the file
+        
+    Returns:
+        Hex string of SHA256 hash
+    """
+    try:
+        with open(file_path, 'rb') as f:
+            return hashlib.sha256(f.read()).hexdigest()
+    except Exception as e:
+        logger.warning(f"Failed to compute hash for {file_path}: {e}")
+        return ""
+
+
+def _compute_content_signature(lines: List[str]) -> str:
+    """
+    Compute a signature for content lines (ignoring whitespace differences).
+    
+    Args:
+        lines: List of content lines
+        
+    Returns:
+        Signature string
+    """
+    # Normalize lines: strip whitespace and filter out empty lines
+    normalized = [line.strip() for line in lines if line.strip()]
+    content = '\n'.join(normalized)
+    return hashlib.md5(content.encode()).hexdigest()
+
+
+def _check_content_already_applied(current_lines: List[str], new_lines: List[str], 
+                                   old_lines: List[str]) -> Tuple[bool, float, str]:
+    """
+    Check if the patch content has already been applied to the file.
+    
+    This function checks:
+    1. If new_lines content already exists in the file (exact match)
+    2. If new_lines content exists with minor whitespace differences (fuzzy match)
+    3. If old_lines content no longer exists (indicating patch was applied)
+    
+    Args:
+        current_lines: Current file content lines
+        new_lines: New lines from patch
+        old_lines: Old lines from patch (expected to be replaced)
+        
+    Returns:
+        Tuple of (already_applied, confidence_score, reason)
+    """
+    if not new_lines:
+        return False, 0.0, "No new content to check"
+    
+    # Normalize lines for comparison (strip trailing whitespace)
+    current_normalized = [line.rstrip() for line in current_lines]
+    new_normalized = [line.rstrip() for line in new_lines]
+    old_normalized = [line.rstrip() for line in old_lines] if old_lines else []
+    
+    # Check 1: Exact match - are all new_lines already in the file consecutively?
+    new_len = len(new_normalized)
+    for i in range(len(current_normalized) - new_len + 1):
+        if current_normalized[i:i+new_len] == new_normalized:
+            logger.info(f"Exact match found: new content already exists at line {i+1}")
+            return True, 1.0, f"New content already exists at line {i+1} (exact match)"
+    
+    # Check 2: Fuzzy match - check if most of new_lines exist in sequence
+    best_match_score = 0.0
+    best_match_location = -1
+    
+    for i in range(len(current_normalized) - new_len + 1):
+        match_count = sum(1 for j in range(new_len) 
+                         if i+j < len(current_normalized) and 
+                         current_normalized[i+j] == new_normalized[j])
+        score = match_count / new_len if new_len > 0 else 0
+        if score > best_match_score:
+            best_match_score = score
+            best_match_location = i + 1
+    
+    if best_match_score >= 0.9:  # 90% match
+        logger.info(f"High similarity match found: {best_match_score:.1%} at line {best_match_location}")
+        return True, best_match_score, f"New content mostly exists at line {best_match_location} ({best_match_score:.1%} match)"
+    
+    # Check 3: Check if old_lines no longer exist (strong indicator patch was applied)
+    if old_normalized:
+        old_exists = False
+        old_len = len(old_normalized)
+        for i in range(len(current_normalized) - old_len + 1):
+            if current_normalized[i:i+old_len] == old_normalized:
+                old_exists = True
+                break
+        
+        if not old_exists:
+            # Old content doesn't exist, check if new content is partially present
+            # Count how many new lines exist anywhere in the file
+            new_lines_in_file = sum(1 for new_line in new_normalized 
+                                   if new_line in current_normalized)
+            partial_score = new_lines_in_file / new_len if new_len > 0 else 0
+            
+            if partial_score >= 0.7:  # 70% of new lines exist
+                logger.info(f"Old content not found, {partial_score:.1%} of new content exists")
+                return True, partial_score, f"Old content removed and {partial_score:.1%} of new content exists"
+    
+    # Check 4: Content signature comparison (ignore whitespace completely)
+    new_signature = _compute_content_signature(new_lines)
+    current_signature = _compute_content_signature(current_lines)
+    
+    # Check if new content signature appears in current file
+    # This is a more lenient check for cases where formatting changed
+    if new_signature in current_signature or len(new_lines) > 10:
+        # For longer patches, check line-by-line presence
+        significant_new_lines = [line for line in new_normalized if len(line.strip()) > 10]
+        if significant_new_lines:
+            present_count = sum(1 for line in significant_new_lines 
+                              if any(line in curr_line for curr_line in current_normalized))
+            presence_score = present_count / len(significant_new_lines)
+            
+            if presence_score >= 0.8:
+                logger.info(f"Content signature match: {presence_score:.1%} of significant lines present")
+                return True, presence_score, f"{presence_score:.1%} of significant new lines already present"
+    
+    return False, best_match_score, f"Content not yet applied (best match: {best_match_score:.1%})"
+
+
+def _load_patch_history() -> Dict[str, Any]:
+    """
+    Load patch application history from file.
+    
+    Returns:
+        Dictionary with patch history data
+    """
+    if not ENABLE_PATCH_HISTORY:
+        return {}
+    
+    try:
+        if PATCH_HISTORY_FILE.exists():
+            with open(PATCH_HISTORY_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+    except Exception as e:
+        logger.warning(f"Failed to load patch history: {e}")
+    
+    return {}
+
+
+def _save_patch_history(history: Dict[str, Any]) -> None:
+    """
+    Save patch application history to file.
+    
+    Args:
+        history: Dictionary with patch history data
+    """
+    if not ENABLE_PATCH_HISTORY:
+        return
+    
+    try:
+        # Create directory if it doesn't exist
+        PATCH_HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
+        
+        with open(PATCH_HISTORY_FILE, 'w', encoding='utf-8') as f:
+            json.dump(history, f, indent=2, ensure_ascii=False)
+        
+        logger.debug(f"Saved patch history to {PATCH_HISTORY_FILE}")
+    except Exception as e:
+        logger.warning(f"Failed to save patch history: {e}")
+
+
+def _record_patch_application(file_path: str, patch_content: str, 
+                              file_hash_before: str, file_hash_after: str,
+                              success: bool, reason: str = "") -> None:
+    """
+    Record a patch application in history.
+    
+    Args:
+        file_path: Path to the file that was patched
+        patch_content: The patch content
+        file_hash_before: File hash before patch
+        file_hash_after: File hash after patch
+        success: Whether patch was successfully applied
+        reason: Reason for success/failure
+    """
+    if not ENABLE_PATCH_HISTORY:
+        return
+    
+    try:
+        history = _load_patch_history()
+        
+        # Initialize file history if not exists
+        if file_path not in history:
+            history[file_path] = {
+                "patches": [],
+                "current_hash": file_hash_after if success else file_hash_before
+            }
+        
+        # Compute patch signature
+        patch_signature = hashlib.md5(patch_content.encode()).hexdigest()
+        
+        # Add patch record
+        patch_record = {
+            "timestamp": datetime.now().isoformat(),
+            "patch_signature": patch_signature,
+            "hash_before": file_hash_before,
+            "hash_after": file_hash_after,
+            "success": success,
+            "reason": reason
+        }
+        
+        history[file_path]["patches"].append(patch_record)
+        history[file_path]["current_hash"] = file_hash_after if success else file_hash_before
+        
+        # Keep only last 100 patches per file
+        if len(history[file_path]["patches"]) > 100:
+            history[file_path]["patches"] = history[file_path]["patches"][-100:]
+        
+        _save_patch_history(history)
+        
+    except Exception as e:
+        logger.warning(f"Failed to record patch application: {e}")
+
+
+def _check_patch_already_applied(file_path: str, patch_content: str) -> Tuple[bool, str]:
+    """
+    Check if this exact patch has already been applied to the file.
+    
+    Args:
+        file_path: Path to the file
+        patch_content: The patch content
+        
+    Returns:
+        Tuple of (already_applied, reason)
+    """
+    if not ENABLE_PATCH_HISTORY:
+        return False, ""
+    
+    try:
+        history = _load_patch_history()
+        
+        if file_path not in history:
+            return False, ""
+        
+        # Compute patch signature
+        patch_signature = hashlib.md5(patch_content.encode()).hexdigest()
+        
+        # Check if this patch was already applied successfully
+        for patch_record in history[file_path]["patches"]:
+            if (patch_record["patch_signature"] == patch_signature and 
+                patch_record["success"]):
+                timestamp = patch_record.get("timestamp", "unknown time")
+                return True, f"This patch was already successfully applied at {timestamp}"
+        
+        return False, ""
+        
+    except Exception as e:
+        logger.warning(f"Failed to check patch history: {e}")
+        return False, ""
+
 
 class ApplyPatchTool(MCPTool):
     """Tool for applying unified diff patches to files."""
@@ -585,6 +849,25 @@ class ApplyPatchTool(MCPTool):
         logger.info(f"File exists, proceeding with patch application")
         
         try:
+            # Compute file hash before patching
+            file_hash_before = _compute_file_hash(resolved_path)
+            
+            # Check if this exact patch was already applied (using history)
+            already_applied, history_reason = _check_patch_already_applied(
+                str(resolved_path), 
+                f"old_lines: {old_lines}\nnew_lines: {new_lines}"
+            )
+            
+            if already_applied:
+                logger.info(f"Patch already applied: {history_reason}")
+                return {
+                    "success": True,
+                    "already_applied": True,
+                    "file_path": str(resolved_path),
+                    "message": f"Patch already applied: {history_reason}",
+                    "reason": history_reason
+                }
+            
             # Read current file content
             logger.debug(f"Reading file content from: {resolved_path}")
             with open(resolved_path, 'r', encoding='utf-8') as f:
@@ -595,6 +878,34 @@ class ApplyPatchTool(MCPTool):
             # Remove trailing newlines for comparison
             current_lines = [line.rstrip('\n\r') for line in current_lines]
             old_lines = [line.rstrip('\n\r') for line in old_lines]
+            new_lines = [line.rstrip('\n\r') for line in new_lines]
+            
+            # Check if the patch content has already been applied (by content inspection)
+            content_applied, confidence, content_reason = _check_content_already_applied(
+                current_lines, new_lines, old_lines
+            )
+            
+            if content_applied and confidence >= 0.8:
+                logger.info(f"Patch content already applied: {content_reason}")
+                
+                # Record this in history
+                _record_patch_application(
+                    str(resolved_path),
+                    f"old_lines: {old_lines}\nnew_lines: {new_lines}",
+                    file_hash_before,
+                    file_hash_before,  # No change since already applied
+                    True,
+                    f"Already applied: {content_reason}"
+                )
+                
+                return {
+                    "success": True,
+                    "already_applied": True,
+                    "file_path": str(resolved_path),
+                    "confidence": confidence,
+                    "message": f"Patch content already applied: {content_reason}",
+                    "reason": content_reason
+                }
             
             # Handle pure addition case (old_lines is empty)
             if not old_lines and new_lines:
@@ -716,6 +1027,16 @@ class ApplyPatchTool(MCPTool):
                                     logger.debug(f"  {match_indicator} Expected: {repr(old_lines[i]) if i < len(old_lines) else 'N/A'}")
                                     logger.debug(f"    Actual:   {repr(current_lines[best_match + i]) if best_match + i < len(current_lines) else 'N/A'}")
                         
+                        # Record failed patch application
+                        _record_patch_application(
+                            str(resolved_path),
+                            f"old_lines: {old_lines}\nnew_lines: {new_lines}",
+                            file_hash_before,
+                            file_hash_before,
+                            False,
+                            f"Could not find patch location. Best match score: {best_score:.2f}"
+                        )
+                        
                         return {
                             "success": False,
                             "error": f"Could not find patch location in file. Expected context not found.",
@@ -761,6 +1082,19 @@ class ApplyPatchTool(MCPTool):
                 for line in new_file_lines:
                     f.write(line + '\n')
             
+            # Compute file hash after patching
+            file_hash_after = _compute_file_hash(resolved_path)
+            
+            # Record patch application in history
+            _record_patch_application(
+                str(resolved_path),
+                f"old_lines: {old_lines}\nnew_lines: {new_lines}",
+                file_hash_before,
+                file_hash_after,
+                True,
+                "Patch applied successfully"
+            )
+            
             logger.info(f"Patch applied successfully to {resolved_path}")
             return {
                 "success": True,
@@ -768,11 +1102,28 @@ class ApplyPatchTool(MCPTool):
                 "patch_location": patch_start,
                 "lines_replaced": len(old_lines),
                 "lines_added": len(new_lines),
-                "message": "Patch applied successfully"
+                "message": "Patch applied successfully",
+                "file_hash_before": file_hash_before,
+                "file_hash_after": file_hash_after
             }
             
         except Exception as e:
             logger.error(f"Error applying patch to {resolved_path}: {e}", exc_info=True)
+            
+            # Record failed patch application
+            try:
+                file_hash = _compute_file_hash(resolved_path) if resolved_path.exists() else ""
+                _record_patch_application(
+                    str(resolved_path),
+                    f"old_lines: {old_lines}\nnew_lines: {new_lines}",
+                    file_hash,
+                    file_hash,
+                    False,
+                    f"Error: {str(e)}"
+                )
+            except Exception:
+                pass  # Don't fail if history recording fails
+            
             return {
                 "success": False,
                 "error": str(e),
