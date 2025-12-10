@@ -14,6 +14,7 @@ class ReActFlow(BaseFlow):
     MAX_ITERATION = 20
     PARALLEL_TOOL_NAME = "execute_parallel_tasks"
     PATCH_TOOL_NAME = "apply_patch"
+    LINTER_TOOL_NAME = "lint_code"
     MAX_PATCH_FAILURES = 5
 
     def __init__(self, workspace_dir: str, is_parent: bool = True):
@@ -26,6 +27,67 @@ class ReActFlow(BaseFlow):
         self.memory = Memory(workspace_dir, is_parent=is_parent)
         self.consecutive_patch_failures = 0
         logger.info(f"Flow agent initialized with {len(self.tools_definitions)} tools, is_parent={is_parent}")
+    
+    def _validate_patch_linter_sequence(self) -> bool:
+        """
+        Validate that if patch tool was used, linter tool was run successfully after the last patch.
+        
+        Returns:
+            True if validation passes (no patches or linter ran successfully after last patch)
+            False if validation fails (patches exist but no successful linter after last patch)
+        """
+        messages = self.memory.get_messages()
+        
+        last_patch_index = -1
+        last_linter_index = -1
+        last_linter_result = None
+        
+        # Find the last patch tool call and last linter tool call
+        for i, msg in enumerate(messages):
+            if msg.get("role") == "assistant" and msg.get("tool_calls"):
+                tool_calls = msg.get("tool_calls", [])
+                for tool_call in tool_calls:
+                    function_name = tool_call.get("function", {}).get("name", "")
+                    if function_name == self.PATCH_TOOL_NAME:
+                        last_patch_index = i
+                    elif function_name == self.LINTER_TOOL_NAME:
+                        last_linter_index = i
+                        # Get the result of this linter call (should be in the next tool message)
+                        if i + 1 < len(messages) and messages[i + 1].get("role") == "tool":
+                            import json
+                            try:
+                                last_linter_result = json.loads(messages[i + 1].get("content", "{}"))
+                            except:
+                                last_linter_result = None
+        
+        # If no patch tool was used, validation passes
+        if last_patch_index == -1:
+            logger.debug("No patch tool calls found, validation passes")
+            return True
+        
+        # If patch was used but no linter was run after it, validation fails
+        if last_linter_index <= last_patch_index:
+            logger.warning(f"Patch tool used at index {last_patch_index}, but no linter call after it (last linter at {last_linter_index})")
+            return False
+        
+        # Check if the last linter call was successful
+        if last_linter_result is None:
+            logger.warning("Last linter result is None")
+            return False
+        
+        # Check if linter tool itself failed to execute
+        if last_linter_result.get("success") is False or "error" in last_linter_result:
+            logger.warning(f"Linter tool execution failed: {last_linter_result}")
+            return False
+        
+        # Check if linter found any syntax errors in the code
+        error_count = last_linter_result.get("error_count", 0)
+        if error_count > 0:
+            logger.warning(f"Linter found {error_count} error(s) in the code")
+            return False
+        
+        logger.info("Patch-linter sequence validation passed: no syntax errors found")
+        return True
     
     async def process(
         self,
@@ -131,6 +193,16 @@ class ReActFlow(BaseFlow):
                         self.consecutive_patch_failures = 0
                 
                 if is_report:
+                    # Before returning, validate that if patches were applied, linter was run after
+                    if not self._validate_patch_linter_sequence():
+                        error_msg = "⚠️ Patch tool was used but linter was not run successfully after the last patch. Please run the linter tool to verify the code changes."
+                        logger.warning(f"Report blocked: {error_msg}")
+                        yield MessageEvent(message=error_msg)
+                        self.memory.messages.append({
+                            "role": "user",
+                            "content": error_msg
+                        })
+                        continue
                     return
             else:
                 answer_text = result.get("answer", "") or ""
