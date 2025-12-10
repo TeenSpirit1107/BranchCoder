@@ -5,6 +5,7 @@ from llm.chat_llm import AsyncChatClientWrapper
 from tools.tool_factory import get_tool_definitions, set_workspace_dir, execute_tool
 from models import ReportEvent, MessageEvent, ToolCallEvent, ToolResultEvent
 from agents.memory import Memory
+from prompts.flow_prompt import PATCH_FAILURE_REFLECTION_PROMPT
 
 logger = Logger('flow', log_to_file=False)
 
@@ -12,15 +13,19 @@ logger = Logger('flow', log_to_file=False)
 class FlowAgent:
     MAX_ITERATION = 10
     PARALLEL_TOOL_NAME = "execute_parallel_tasks"
+    PATCH_TOOL_NAME = "apply_patch"
+    MAX_PATCH_FAILURES = 5
 
-    def __init__(self, workspace_dir: str):
+    def __init__(self, workspace_dir: str, is_parent: bool = True):
         self.llm_client = AsyncChatClientWrapper()
         logger.info("LLM client initialized successfully")
-        self.tools_definitions = get_tool_definitions()
+        self.is_parent = is_parent
+        self.tools_definitions = get_tool_definitions(is_parent=is_parent)
         self.workspace_dir = workspace_dir
         set_workspace_dir(workspace_dir)
-        self.memory = Memory(workspace_dir)
-        logger.info(f"Flow agent initialized with {len(self.tools_definitions)} tools")
+        self.memory = Memory(workspace_dir, is_parent=is_parent)
+        self.consecutive_patch_failures = 0
+        logger.info(f"Flow agent initialized with {len(self.tools_definitions)} tools, is_parent={is_parent}")
     
     async def process(
         self,
@@ -36,6 +41,9 @@ class FlowAgent:
             self.memory.messages = copy.deepcopy(parent_history)
             self.memory.messages.append({"role": "user", "content": message})
             self.memory.add_user_message(session_id, message)
+        
+        # Reset patch failure counter for new user message
+        self.consecutive_patch_failures = 0
         iteration = 0
         while iteration < self.MAX_ITERATION:
             iteration += 1
@@ -50,6 +58,15 @@ class FlowAgent:
                 tool_args = dict(result.get("tool_args") or {})
 
                 if tool_name == self.PARALLEL_TOOL_NAME:
+                    # Check if this agent is allowed to create sub-agents
+                    if not self.is_parent:
+                        error_msg = "⚠️ This agent is not allowed to create sub-agents. Only parent agents can use execute_parallel_tasks."
+                        logger.warning(f"Blocked parallel task execution: agent is not a parent (session: {session_id})")
+                        yield MessageEvent(message=error_msg)
+                        self.memory.add_tool_call(session_id, iteration, tool_name, tool_args)
+                        self.memory.add_tool_result(session_id, iteration, {"success": False, "error": error_msg})
+                        continue
+                    
                     # TODO(Yimeng): fix redundant deepcopy (shouldn't have copied when init)
                     context_messages = copy.deepcopy(self.memory.get_messages())
                     tool_args.setdefault("context_messages", context_messages)
@@ -57,6 +74,8 @@ class FlowAgent:
 
                 logger.info(f"Tool call: {tool_name} with args: {tool_args}")
 
+                is_report = False
+                
                 tool_result = None
                 async for event in execute_tool(ToolCallEvent(
                     message=f"Calling {tool_name}",
@@ -71,15 +90,48 @@ class FlowAgent:
                         yield event
                         tool_result = event.result
                     elif isinstance(event, ReportEvent):
+                        is_report = True
                         yield event
-                        return
+                    # TODO(Yimeng): fix looping logic
+                    if tool_result is None:
+                        tool_result = {"error": "Tool execution returned no result"}
 
-                # TODO(Yimeng): move this into for loop
-                if tool_result is None:
-                    tool_result = {"error": "Tool execution returned no result"}
-
-                self.memory.add_tool_call(session_id, iteration, tool_name, tool_args)
-                self.memory.add_tool_result(session_id, iteration, tool_result)
+                    self.memory.add_tool_call(session_id, iteration, tool_name, tool_args)
+                    self.memory.add_tool_result(session_id, iteration, tool_result)
+                
+                # Track patch tool failures
+                if tool_name == self.PATCH_TOOL_NAME:
+                    is_patch_failed = (
+                        tool_result is not None and 
+                        (isinstance(tool_result, dict) and 
+                         (tool_result.get("success") is False or 
+                          "error" in tool_result or 
+                          tool_result.get("status") == "failed"))
+                    )
+                    
+                    if is_patch_failed:
+                        self.consecutive_patch_failures += 1
+                        logger.warning(f"Patch tool failed. Consecutive failures: {self.consecutive_patch_failures}/{self.MAX_PATCH_FAILURES}")
+                        
+                        if self.consecutive_patch_failures >= self.MAX_PATCH_FAILURES:
+                            logger.error(f"Reached max consecutive patch failures ({self.MAX_PATCH_FAILURES}). Triggering reflection.")
+                            reflection_message = PATCH_FAILURE_REFLECTION_PROMPT.format(
+                                failure_count=self.MAX_PATCH_FAILURES
+                            )
+                            self.memory.messages.append({
+                                "role": "user",
+                                "content": reflection_message
+                            })
+                            self.consecutive_patch_failures = 0  # Reset counter
+                            yield MessageEvent(message=reflection_message)
+                    else:
+                        # Patch succeeded, reset counter
+                        if self.consecutive_patch_failures > 0:
+                            logger.info(f"Patch tool succeeded. Resetting failure counter from {self.consecutive_patch_failures} to 0.")
+                        self.consecutive_patch_failures = 0
+                
+                if is_report:
+                    return
             else:
                 answer_text = result.get("answer", "") or ""
                 if answer_text:

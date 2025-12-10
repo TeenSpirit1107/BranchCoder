@@ -118,12 +118,30 @@ def get_tool(tool_name: str) -> Optional[MCPTool]:
     return _tool_registry.get(tool_name)
 
 
-def get_tool_definitions() -> List[Dict[str, Any]]:
-    return [
-        tool.get_tool_definition() 
-        for tool in _tool_registry.values() 
-        if tool.agent_tool
-    ]
+def get_tool_definitions(is_parent: bool = True) -> List[Dict[str, Any]]:
+    """
+    Get tool definitions for the agent.
+    
+    Args:
+        is_parent: If False, excludes execute_parallel_tasks tool to prevent
+                   child agents from creating sub-agents.
+    
+    Returns:
+        List of tool definitions
+    """
+    tools = []
+    for tool in _tool_registry.values():
+        if not tool.agent_tool:
+            continue
+        
+        # Exclude parallel task executor for child agents
+        if not is_parent and tool.name == "execute_parallel_tasks":
+            logger.debug("Excluding execute_parallel_tasks tool for child agent")
+            continue
+        
+        tools.append(tool.get_tool_definition())
+    
+    return tools
 
 
 def set_workspace_dir(workspace_dir: str) -> None:
@@ -164,6 +182,15 @@ async def execute_tool(tool_call_event: ToolCallEvent) -> AsyncGenerator[BaseEve
 
     try:
         logger.info(f"Executing tool: {tool_name} with args: {tool_args}")
+        
+        # Special handling for parallel task executor - use streaming mode
+        if tool_name == "execute_parallel_tasks" and hasattr(tool, 'execute_streaming'):
+            logger.info("Using streaming mode for parallel task execution")
+            async for event in tool.execute_streaming(**tool_args):
+                yield event
+            # No need to yield a separate ToolResultEvent, the streaming already provides all events
+            return
+        
         result = await tool.execute(**tool_args)
         
         if tool_name == "send_report":
