@@ -164,6 +164,15 @@ async def execute_tool(tool_call_event: ToolCallEvent) -> AsyncGenerator[BaseEve
 
     try:
         logger.info(f"Executing tool: {tool_name} with args: {tool_args}")
+        
+        # Special handling for parallel task executor - use streaming mode
+        if tool_name == "execute_parallel_tasks" and hasattr(tool, 'execute_streaming'):
+            logger.info("Using streaming mode for parallel task execution")
+            async for event in tool.execute_streaming(**tool_args):
+                yield event
+            # No need to yield a separate ToolResultEvent, the streaming already provides all events
+            return
+        
         result = await tool.execute(**tool_args)
         
         if tool_name == "send_report":
