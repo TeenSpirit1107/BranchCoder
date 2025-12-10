@@ -22,7 +22,7 @@ class PlanActFlow(BaseFlow):
     Phase 2 (Acting): Execute each step, potentially revising the plan based on results
     """
     
-    MAX_ITERATION = 25  # Higher limit since planning adds overhead
+    MAX_ITERATION = 40 # Higher limit since planning adds overhead
     MAX_PLANNING_ITERATIONS = 3  # Max times to revise the plan
     PARALLEL_TOOL_NAME = "execute_parallel_tasks"
     PATCH_TOOL_NAME = "apply_patch"

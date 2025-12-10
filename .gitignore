@@ -76,6 +76,7 @@ logs/
 .env.test.local
 .env.production.local
 
+clear_logs.sh
 
 # Node.js
 node_modules/

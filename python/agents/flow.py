@@ -11,7 +11,7 @@ logger = Logger('flow', log_to_file=False)
 
 
 class ReActFlow(BaseFlow):
-    MAX_ITERATION = 20
+    MAX_ITERATION = 30
     PARALLEL_TOOL_NAME = "execute_parallel_tasks"
     PATCH_TOOL_NAME = "apply_patch"
     LINTER_TOOL_NAME = "lint_code"
