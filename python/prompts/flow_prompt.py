@@ -28,3 +28,36 @@ Current Information:
 - Workspace Directory: {workspace_dir}
 - Workspace File Structure: {workspace_structure}
 """
+
+PATCH_FAILURE_REFLECTION_PROMPT = """
+
+⚠️ IMPORTANT: The patch application has failed {failure_count} times consecutively.
+
+Please STOP and carefully reflect on the following questions:
+
+1. Are you making the same mistake repeatedly?
+   - Review the error messages from previous failures
+   - Check if you're using the same approach that keeps failing
+
+2. Is your understanding of the codebase correct?
+   - Consider using workspace_rag_retrieve to get more context
+   - Use get_workspace_structure to verify file locations and structure
+   - Re-read the relevant code sections
+
+3. Should you try a different approach?
+   - Instead of patching, consider if there's a simpler solution
+   - Break down the change into smaller, incremental patches
+   - Verify the file content before generating patches
+
+4. Do you need to gather more context or information?
+   - Search for similar patterns in the codebase
+   - Look for documentation or comments that might help
+   - Check if there are dependencies or imports you're missing
+
+5. Are there any patterns in the failures that suggest a fundamental issue?
+   - Is the file path correct?
+   - Are you trying to patch code that doesn't exist?
+   - Is there a syntax or formatting issue in your patches?
+
+Please analyze the previous failures carefully, gather necessary information, and adjust your strategy before attempting to apply another patch.
+"""

@@ -5,6 +5,7 @@ from llm.chat_llm import AsyncChatClientWrapper
 from tools.tool_factory import get_tool_definitions, set_workspace_dir, execute_tool
 from models import ReportEvent, MessageEvent, ToolCallEvent, ToolResultEvent
 from agents.memory import Memory
+from prompts.flow_prompt import PATCH_FAILURE_REFLECTION_PROMPT
 
 logger = Logger('flow', log_to_file=False)
 
@@ -12,6 +13,8 @@ logger = Logger('flow', log_to_file=False)
 class FlowAgent:
     MAX_ITERATION = 10
     PARALLEL_TOOL_NAME = "execute_parallel_tasks"
+    PATCH_TOOL_NAME = "apply_patch"
+    MAX_PATCH_FAILURES = 5
 
     def __init__(self, workspace_dir: str):
         self.llm_client = AsyncChatClientWrapper()
@@ -20,6 +23,7 @@ class FlowAgent:
         self.workspace_dir = workspace_dir
         set_workspace_dir(workspace_dir)
         self.memory = Memory(workspace_dir)
+        self.consecutive_patch_failures = 0
         logger.info(f"Flow agent initialized with {len(self.tools_definitions)} tools")
     
     async def process(
@@ -36,6 +40,9 @@ class FlowAgent:
             self.memory.messages = copy.deepcopy(parent_history)
             self.memory.messages.append({"role": "user", "content": message})
             self.memory.add_user_message(session_id, message)
+        
+        # Reset patch failure counter for new user message
+        self.consecutive_patch_failures = 0
         iteration = 0
         while iteration < self.MAX_ITERATION:
             iteration += 1
@@ -81,6 +88,37 @@ class FlowAgent:
 
                     self.memory.add_tool_call(session_id, iteration, tool_name, tool_args)
                     self.memory.add_tool_result(session_id, iteration, tool_result)
+                
+                # Track patch tool failures
+                if tool_name == self.PATCH_TOOL_NAME:
+                    is_patch_failed = (
+                        tool_result is not None and 
+                        (isinstance(tool_result, dict) and 
+                         (tool_result.get("success") is False or 
+                          "error" in tool_result or 
+                          tool_result.get("status") == "failed"))
+                    )
+                    
+                    if is_patch_failed:
+                        self.consecutive_patch_failures += 1
+                        logger.warning(f"Patch tool failed. Consecutive failures: {self.consecutive_patch_failures}/{self.MAX_PATCH_FAILURES}")
+                        
+                        if self.consecutive_patch_failures >= self.MAX_PATCH_FAILURES:
+                            logger.error(f"Reached max consecutive patch failures ({self.MAX_PATCH_FAILURES}). Triggering reflection.")
+                            reflection_message = PATCH_FAILURE_REFLECTION_PROMPT.format(
+                                failure_count=self.MAX_PATCH_FAILURES
+                            )
+                            self.memory.messages.append({
+                                "role": "user",
+                                "content": reflection_message
+                            })
+                            self.consecutive_patch_failures = 0  # Reset counter
+                            yield MessageEvent(message=reflection_message)
+                    else:
+                        # Patch succeeded, reset counter
+                        if self.consecutive_patch_failures > 0:
+                            logger.info(f"Patch tool succeeded. Resetting failure counter from {self.consecutive_patch_failures} to 0.")
+                        self.consecutive_patch_failures = 0
                 
                 if is_report:
                     return
