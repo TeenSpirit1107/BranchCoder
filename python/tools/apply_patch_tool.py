@@ -7,10 +7,15 @@ import os
 import re
 from typing import Dict, Any, Optional, List, Tuple
 from pathlib import Path
+from datetime import datetime
 from utils.logger import Logger
 from tools.base_tool import MCPTool
 
 logger = Logger('apply_patch_tool', log_to_file=False)
+
+# Configuration for patch saving
+ENABLE_PATCH_SAVE = True  # Set to False to disable patch saving
+PATCH_SAVE_DIR = Path("/home/ym/Documents/Projects/Course/CSC4100/group_project/BranchCoder/logs/patches")
 
 
 class ApplyPatchTool(MCPTool):
@@ -606,6 +611,44 @@ class ApplyPatchTool(MCPTool):
                 "file_path": str(resolved_path)
             }
     
+    def _save_patch_to_file(self, patch_content: str, target_file_path: str, success: bool) -> Optional[str]:
+        """
+        Save patch content to a file for record keeping.
+        
+        Args:
+            patch_content: The patch content to save
+            target_file_path: The target file path that was patched
+            success: Whether the patch was successfully applied
+        
+        Returns:
+            Path to saved patch file, or None if saving failed
+        """
+        try:
+            # Create patches directory if it doesn't exist
+            PATCH_SAVE_DIR.mkdir(parents=True, exist_ok=True)
+            
+            # Generate filename with timestamp
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+            # Extract filename from target path for better organization
+            target_filename = Path(target_file_path).name
+            status = "success" if success else "failed"
+            patch_filename = f"{timestamp}_{target_filename}_{status}.patch"
+            patch_file_path = PATCH_SAVE_DIR / patch_filename
+            
+            # Write patch content to file
+            with open(patch_file_path, 'w', encoding='utf-8') as f:
+                f.write(f"# Patch for: {target_file_path}\n")
+                f.write(f"# Timestamp: {datetime.now().isoformat()}\n")
+                f.write(f"# Status: {status}\n")
+                f.write(f"# {'=' * 76}\n\n")
+                f.write(patch_content)
+            
+            logger.info(f"Patch saved to: {patch_file_path}")
+            return str(patch_file_path)
+        except Exception as e:
+            logger.error(f"Failed to save patch to file: {e}", exc_info=True)
+            return None
+    
     async def execute(self, patch_content: str, target_file_path: str, dry_run: bool = False) -> Dict[str, Any]:
         """
         Apply a patch to a file.
@@ -684,6 +727,16 @@ class ApplyPatchTool(MCPTool):
         else:
             logger.error(f"Patch failed: {result.get('error', 'unknown error')}")
         
+        # Save patch to file for record keeping (only if not dry_run)
+        saved_patch_path = None
+        
+        if not dry_run and ENABLE_PATCH_SAVE:
+            saved_patch_path = self._save_patch_to_file(
+                patch_text, 
+                target_file_path,
+                result.get("success", False)
+            )
+        
         logger.info(f"Patch application complete: {'success' if result.get('success') else 'failed'}")
         logger.info("=" * 80)
         
@@ -697,6 +750,10 @@ class ApplyPatchTool(MCPTool):
         # Include dry_run flag if result has it
         if dry_run or result.get("dry_run", False):
             return_dict["dry_run"] = True
+        
+        # Include saved patch path if available
+        if saved_patch_path:
+            return_dict["saved_patch_path"] = saved_patch_path
         
         return return_dict
 
