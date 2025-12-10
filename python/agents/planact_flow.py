@@ -41,12 +41,13 @@ class PlanActFlow(BaseFlow):
         self.plan_revision_count = 0
         logger.info(f"PlanAct Flow agent initialized with {len(self.tools_definitions)} tools, is_parent={is_parent}")
     
-    async def _generate_plan(self, session_id: str) -> Optional[str]:
+    async def _generate_plan(self, session_id: str):
         """
         Generate an execution plan by asking the LLM to think through the steps.
+        Sets self.current_plan if successful.
         
-        Returns:
-            The plan as a string, or None if planning failed
+        Yields:
+            MessageEvent for progress updates
         """
         logger.info(f"Generating execution plan for session {session_id}")
         
@@ -65,7 +66,8 @@ class PlanActFlow(BaseFlow):
             tools=None,  # No tools during planning phase
         )
         
-        if result["type"] == "text":
+        # Check if LLM returned a text/answer response (not a tool call)
+        if result.get("type") in ["text", "answer"]:
             plan = result.get("answer", "")
             if plan and "EXECUTION PLAN" in plan.upper():
                 logger.info(f"Plan generated successfully:\n{plan}")
@@ -76,25 +78,26 @@ class PlanActFlow(BaseFlow):
                     "content": plan
                 })
                 yield MessageEvent(message=f"📋 Plan created:\n{plan}")
-                return plan
+                return  # Plan stored in self.current_plan
         
         logger.warning("Failed to generate a valid plan, proceeding without explicit plan")
-        return None
+        self.current_plan = None
     
-    async def _revise_plan(self, session_id: str, reason: str) -> Optional[str]:
+    async def _revise_plan(self, session_id: str, reason: str):
         """
         Revise the current plan based on execution results.
+        Updates self.current_plan if successful.
         
         Args:
             session_id: Current session ID
             reason: Reason for plan revision (e.g., tool failure, unexpected result)
             
-        Returns:
-            Revised plan as string, or None if revision failed
+        Yields:
+            MessageEvent for progress updates
         """
         if self.plan_revision_count >= self.MAX_PLANNING_ITERATIONS:
             logger.warning(f"Max plan revisions ({self.MAX_PLANNING_ITERATIONS}) reached")
-            return None
+            return
         
         self.plan_revision_count += 1
         logger.info(f"Revising plan (attempt {self.plan_revision_count}): {reason}")
@@ -116,7 +119,8 @@ class PlanActFlow(BaseFlow):
             tools=None,
         )
         
-        if result["type"] == "text":
+        # Check if LLM returned a text/answer response (not a tool call)
+        if result.get("type") in ["text", "answer"]:
             revised_plan = result.get("answer", "")
             if revised_plan and "PLAN" in revised_plan.upper():
                 logger.info(f"Plan revised successfully:\n{revised_plan}")
@@ -126,10 +130,9 @@ class PlanActFlow(BaseFlow):
                     "content": revised_plan
                 })
                 yield MessageEvent(message=f"🔄 Plan revised:\n{revised_plan}")
-                return revised_plan
+                return  # Plan stored in self.current_plan
         
         logger.warning("Failed to revise plan")
-        return None
     
     async def process(
         self,

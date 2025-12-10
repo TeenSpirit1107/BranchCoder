@@ -156,8 +156,7 @@ async def async_main():
         session_id = data.get("session_id", "default")  # Optional session ID
         workspace_dir = data.get("workspace_dir", None)  # Optional workspace directory
         request_type = data.get("request_type", "response")
-        # DEBUG: Hard-coded to planact for testing until frontend implements agent selection
-        agent_type = "planact"  # data.get("agent_type", "react")  # TODO(Yimeng): Uncomment when frontend is ready
+        agent_type = data.get("agent_type", "react")  # Optional agent type: "react" or "planact"
         
         if request_type == "response":
             if not message:

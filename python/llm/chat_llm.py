@@ -100,13 +100,30 @@ class AsyncChatClientWrapper:
         message = choice.message
 
         # token 统计
-        usage = getattr(completion, "usage", None) or {}
-        usage_dict = {
-            "prompt_tokens": getattr(usage, "prompt_tokens", 0) or usage.get("prompt_tokens", 0),
-            "completion_tokens": getattr(usage, "completion_tokens", 0) or usage.get("completion_tokens", 0),
-            "total_tokens": getattr(usage, "total_tokens", 0)
-            or usage.get("total_tokens", usage.get("prompt_tokens", 0) + usage.get("completion_tokens", 0)),
-        }
+        usage = getattr(completion, "usage", None)
+        if usage:
+            # usage 可能是 Pydantic 对象或字典
+            if hasattr(usage, "prompt_tokens"):
+                # Pydantic 对象，使用 getattr
+                usage_dict = {
+                    "prompt_tokens": getattr(usage, "prompt_tokens", 0) or 0,
+                    "completion_tokens": getattr(usage, "completion_tokens", 0) or 0,
+                    "total_tokens": getattr(usage, "total_tokens", 0) or 0,
+                }
+            else:
+                # 字典对象，使用 .get()
+                usage_dict = {
+                    "prompt_tokens": usage.get("prompt_tokens", 0),
+                    "completion_tokens": usage.get("completion_tokens", 0),
+                    "total_tokens": usage.get("total_tokens", 0),
+                }
+        else:
+            # 没有 usage 信息
+            usage_dict = {
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "total_tokens": 0,
+            }
 
         # tool_calls（新版接口）
         if getattr(message, "tool_calls", None):
