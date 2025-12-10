@@ -35,16 +35,27 @@ class ParallelTaskExecutorTool(MCPTool):
             "type": "function",
             "function": {
                 "name": "execute_parallel_tasks",
-                "description": "Execute a collection of programming tasks in parallel by spinning up sub-agents and summarizing their outputs.",
+                "description": (
+                    "⚡ Execute multiple independent programming tasks SIMULTANEOUSLY for maximum efficiency. "
+                    "MANDATORY when request has 2+ independent subtasks (different files, different functions/classes in same file, multiple bugs/features). "
+                    "Example: 'Fix bug in auth.py and add logging to utils.py' → 2 parallel tasks. "
+                    "Example: 'Optimize func_a() and func_b() in helpers.py' → 2 parallel tasks (same file is OK!). "
+                    "Creates sub-agents that work concurrently, dramatically reducing execution time."
+                ),
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "tasks": {
                             "type": "array",
-                            "description": "List of task descriptions to run in parallel.",
+                            "description": (
+                                "Array of independent task descriptions. Each must be clear and self-contained. "
+                                "Be specific: include file names, function names, and exact actions. "
+                                "Example: ['Add type hints to utils.py', 'Fix memory leak in cache.py', 'Optimize query_db() in database.py']"
+                            ),
                             "items": {
                                 "type": "string"
-                            }
+                            },
+                            "minItems": 2
                         },
                     },
                     "required": ["tasks"]
