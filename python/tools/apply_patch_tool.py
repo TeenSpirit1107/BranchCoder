@@ -105,17 +105,60 @@ class ApplyPatchTool(MCPTool):
             tool_result: Tool execution result
         
         Returns:
-            Custom notification message string
+            Custom notification message string with detailed error information
         """
         success = tool_result.get("success", False)
         patches_applied = tool_result.get("patches_applied", 0)
         patches_total = tool_result.get("patches_total", 0)
         
         if success:
-            return f"补丁应用成功 ({patches_applied}/{patches_total})"
+            return f"✅ 补丁应用成功 ({patches_applied}/{patches_total})"
         else:
-            error = tool_result.get("error", "未知错误")
-            return f"补丁应用失败: {error}"
+            # Build detailed error message
+            error_parts = []
+            
+            # Get main error message
+            main_error = tool_result.get("error", "未知错误")
+            error_parts.append(f"❌ 补丁应用失败: {main_error}")
+            
+            # Check if there are detailed results
+            results = tool_result.get("results", [])
+            if results:
+                result = results[0]
+                
+                # Add file path if available
+                file_path = result.get("file_path")
+                if file_path:
+                    error_parts.append(f"📁 文件路径: {file_path}")
+                
+                # Add match score if available (for fuzzy match failures)
+                best_match_score = result.get("best_match_score")
+                if best_match_score is not None:
+                    error_parts.append(f"🎯 最佳匹配分数: {best_match_score:.2%} (需要 ≥ {FUZZY_MATCH_THERSHOLD:.0%})")
+                
+                # Add best match location if available
+                best_match_location = result.get("best_match_location")
+                if best_match_location:
+                    error_parts.append(f"📍 最接近位置: 第 {best_match_location} 行")
+                
+                # Add line count information
+                expected_lines = result.get("expected_lines_count")
+                actual_lines = result.get("actual_lines_count")
+                if expected_lines is not None and actual_lines is not None:
+                    error_parts.append(f"📊 行数信息: 期望 {expected_lines} 行，实际文件 {actual_lines} 行")
+                
+                # Add context preview if available
+                expected_context = result.get("expected_context")
+                if expected_context and len(expected_context) > 0:
+                    preview = expected_context[0][:60] + "..." if len(expected_context[0]) > 60 else expected_context[0]
+                    error_parts.append(f"🔍 期望上下文首行: {preview}")
+                
+                # Add suggestion if available
+                suggestion = result.get("suggestion")
+                if suggestion:
+                    error_parts.append(f"💡 建议: {suggestion}")
+            
+            return "\n".join(error_parts)
     
     def _parse_patch(self, patch_content: str) -> List[Tuple[str, List[str], List[str]]]:
         """
@@ -410,10 +453,51 @@ class ApplyPatchTool(MCPTool):
         # Check if file exists
         if not resolved_path.exists():
             logger.error(f"File does not exist: {resolved_path}")
+            
+            # Provide helpful suggestions
+            parent_dir = resolved_path.parent
+            suggestions = []
+            
+            # Check if parent directory exists
+            if not parent_dir.exists():
+                suggestions.append(f"父目录不存在: {parent_dir}")
+            else:
+                # List files in parent directory for suggestions
+                try:
+                    similar_files = [f.name for f in parent_dir.iterdir() if f.is_file()]
+                    if similar_files:
+                        suggestions.append(f"父目录中的文件: {', '.join(similar_files[:5])}")
+                        if len(similar_files) > 5:
+                            suggestions.append(f"... 还有 {len(similar_files) - 5} 个文件")
+                except Exception:
+                    pass
+            
+            # Check if workspace_dir is set
+            if self.workspace_dir:
+                suggestions.append(f"工作区目录: {self.workspace_dir}")
+                # Try to find similar files in workspace
+                try:
+                    workspace_path = Path(self.workspace_dir)
+                    if workspace_path.exists():
+                        filename = resolved_path.name
+                        matching_files = list(workspace_path.rglob(filename))
+                        if matching_files:
+                            suggestions.append(f"在工作区中找到同名文件: {', '.join(str(f) for f in matching_files[:3])}")
+                except Exception:
+                    pass
+            
+            error_msg = f"文件不存在: {resolved_path}"
+            if suggestions:
+                error_msg += "\n💡 提示:\n  - " + "\n  - ".join(suggestions)
+            
             return {
                 "success": False,
-                "error": f"File does not exist: {resolved_path}",
-                "file_path": str(resolved_path)
+                "error": error_msg,
+                "file_path": str(resolved_path),
+                "parent_directory": str(parent_dir),
+                "parent_exists": parent_dir.exists(),
+                "workspace_dir": self.workspace_dir,
+                "suggestion": "请检查文件路径是否正确。如果使用相对路径，请确保提供了正确的工作区目录。"
             }
         
         logger.info(f"File exists, proceeding with patch application")
@@ -678,9 +762,19 @@ class ApplyPatchTool(MCPTool):
                 logger.info(f"Using workspace directory: {self.workspace_dir}")
             else:
                 logger.error(f"target_file_path must be an absolute path, got: {target_file_path} (no workspace_dir set)")
+                error_msg = f"❌ 路径错误: 必须提供绝对路径\n"
+                error_msg += f"📝 收到的路径: {target_file_path}\n"
+                error_msg += f"⚠️  问题: 这是一个相对路径，但没有设置工作区目录\n"
+                error_msg += f"💡 解决方案:\n"
+                error_msg += f"  1. 使用完整的绝对路径 (如: /home/user/project/file.py)\n"
+                error_msg += f"  2. 或确保工作区目录已正确设置"
                 return {
                     "success": False,
-                    "error": f"target_file_path must be an absolute path, got: {target_file_path}"
+                    "error": error_msg,
+                    "received_path": target_file_path,
+                    "is_absolute": False,
+                    "workspace_dir": None,
+                    "suggestion": "请使用绝对路径或确保工作区目录已设置。绝对路径示例: /home/user/project/src/main.py"
                 }
         
         # Check if patch_content is a file path
@@ -705,16 +799,38 @@ class ApplyPatchTool(MCPTool):
             logger.info(f"Parsed {len(patches)} patch(es) from content")
         except Exception as e:
             logger.error(f"Error parsing patch: {e}", exc_info=True)
+            error_msg = f"❌ 补丁解析失败\n"
+            error_msg += f"📝 错误详情: {str(e)}\n"
+            error_msg += f"📊 补丁内容长度: {len(patch_text)} 字符\n"
+            error_msg += f"🔍 补丁内容预览: {patch_text[:200]}...\n" if len(patch_text) > 200 else f"🔍 补丁内容: {patch_text}\n"
+            error_msg += f"💡 提示: 请检查补丁格式是否正确"
             return {
                 "success": False,
-                "error": f"Failed to parse patch: {str(e)}"
+                "error": error_msg,
+                "parse_error": str(e),
+                "patch_length": len(patch_text),
+                "patch_preview": patch_text[:500] if len(patch_text) > 500 else patch_text
             }
         
         if not patches:
             logger.error("No valid patches found in patch content")
+            error_msg = f"❌ 未找到有效的补丁内容\n"
+            error_msg += f"📊 补丁内容长度: {len(patch_text)} 字符\n"
+            error_msg += f"🔍 补丁内容预览:\n{patch_text[:300]}...\n" if len(patch_text) > 300 else f"🔍 补丁内容:\n{patch_text}\n"
+            error_msg += f"💡 要求: 补丁应该使用统一差异格式 (unified diff format)\n"
+            error_msg += f"   格式示例:\n"
+            error_msg += f"   --- a/file.py\n"
+            error_msg += f"   +++ b/file.py\n"
+            error_msg += f"   @@ -1,3 +1,3 @@\n"
+            error_msg += f"    context line\n"
+            error_msg += f"   -old line\n"
+            error_msg += f"   +new line\n"
             return {
                 "success": False,
-                "error": "No valid patches found in patch content. Patch should be in unified diff format starting with '---' and '+++'."
+                "error": error_msg,
+                "patch_length": len(patch_text),
+                "patch_preview": patch_text[:500] if len(patch_text) > 500 else patch_text,
+                "suggestion": "请确保补丁格式正确，使用 '---' 和 '+++' 开头，并包含 '@@ ... @@' 行号标记"
             }
         
         # Log parsed patches
@@ -755,6 +871,24 @@ class ApplyPatchTool(MCPTool):
             "patches_total": 1,
             "results": [result]
         }
+        
+        # Include error message at top level for easier access
+        if not result.get("success", False):
+            return_dict["error"] = result.get("error", "Unknown error")
+            
+            # Include detailed error information for better debugging
+            error_details = {
+                "file_path": result.get("file_path"),
+                "best_match_score": result.get("best_match_score"),
+                "best_match_location": result.get("best_match_location"),
+                "expected_lines_count": result.get("expected_lines_count"),
+                "actual_lines_count": result.get("actual_lines_count"),
+                "suggestion": result.get("suggestion")
+            }
+            # Remove None values
+            error_details = {k: v for k, v in error_details.items() if v is not None}
+            if error_details:
+                return_dict["error_details"] = error_details
         
         # Include dry_run flag if result has it
         if dry_run or result.get("dry_run", False):
