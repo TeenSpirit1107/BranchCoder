@@ -840,11 +840,16 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
 
         // Handle messages from webview
         webviewView.webview.onDidReceiveMessage(
-            async (message: { command: string; text?: string; sessionId?: string }) => {
+            async (message: { command: string; text?: string; sessionId?: string; agentType?: string }) => {
                 switch (message.command) {
                     case 'sendMessage':
                         if (message.text) {
                             await this.chatPanel?.sendMessage(message.text);
+                        }
+                        return;
+                    case 'changeAgentType':
+                        if (message.agentType) {
+                            this.chatPanel?.setAgentType(message.agentType);
                         }
                         return;
                     case 'requestHistory':

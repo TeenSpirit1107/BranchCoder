@@ -136,3 +136,36 @@ Please STOP and carefully reflect on the following questions:
 
 Please analyze the previous failures carefully, gather necessary information, and adjust your strategy before attempting to apply another patch.
 """
+
+PLANNING_PROMPT = """
+Before taking any actions, please create a detailed execution plan for this task.
+
+Your plan should:
+1. Break down the task into clear, sequential steps
+2. Identify which tools you'll need for each step
+3. Note any dependencies between steps
+4. Consider potential issues or edge cases
+
+Please format your plan as:
+**EXECUTION PLAN:**
+Step 1: [Description] - Tool: [tool_name]
+Step 2: [Description] - Tool: [tool_name]
+...
+
+After creating the plan, I will execute it step by step.
+"""
+
+PLAN_REVISION_PROMPT = """
+The current plan needs to be revised due to: {revision_reason}
+
+Original plan:
+{original_plan}
+
+Please create a REVISED EXECUTION PLAN that addresses this issue.
+Consider what went wrong and adjust your approach accordingly.
+
+**REVISED EXECUTION PLAN:**
+Step 1: [Description] - Tool: [tool_name]
+Step 2: [Description] - Tool: [tool_name]
+...
+"""

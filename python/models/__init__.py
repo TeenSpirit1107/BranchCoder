@@ -8,7 +8,8 @@ from models.models import (
     ToolCallEvent,
     ToolResultEvent,
     ReportEvent,
-    MessageEvent
+    MessageEvent,
+    BaseFlow
 )
 
 __all__ = [
@@ -16,6 +17,7 @@ __all__ = [
     "ToolCallEvent",
     "ToolResultEvent",
     "ReportEvent",
-    "MessageEvent"
+    "MessageEvent",
+    "BaseFlow"
 ]
 

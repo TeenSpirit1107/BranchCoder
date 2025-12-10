@@ -273,6 +273,43 @@ body {
     background-color: var(--vscode-list-hoverBackground);
 }
 
+.agent-selector-container {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    border-top: 1px solid var(--vscode-panel-border);
+    background-color: var(--vscode-editor-background);
+}
+
+.agent-selector-container label {
+    font-size: 0.9em;
+    color: var(--vscode-descriptionForeground);
+    white-space: nowrap;
+}
+
+#agentTypeSelect {
+    flex: 1;
+    padding: 4px 8px;
+    border: 1px solid var(--vscode-input-border);
+    background-color: var(--vscode-input-background);
+    color: var(--vscode-input-foreground);
+    font-family: var(--vscode-font-family);
+    font-size: var(--vscode-font-size);
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+#agentTypeSelect:focus {
+    outline: 1px solid var(--vscode-focusBorder);
+    outline-offset: -1px;
+}
+
+#agentTypeSelect option {
+    background-color: var(--vscode-input-background);
+    color: var(--vscode-input-foreground);
+}
+
 .chat-input-container {
     display: flex;
     gap: 8px;

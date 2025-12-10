@@ -9,6 +9,7 @@ export class ChatPanel {
     private chatHistory: Array<{ role: string; content: string }> = [];
     private currentPatchSessionId: string | null = null;
     private sessionId: string;
+    private agentType: string = 'react'; // Default to react
 
     constructor(
         private readonly webview: vscode.Webview,
@@ -66,6 +67,13 @@ export class ChatPanel {
         this.currentPatchSessionId = null;
         this.sessionId = this.createSessionId();
         this.update();
+    }
+
+    public setAgentType(agentType: string) {
+        this.agentType = agentType;
+        if (this.outputChannel) {
+            this.outputChannel.appendLine(`Agent type changed to: ${agentType}`);
+        }
     }
 
     public hidePatchButtons() {
@@ -203,7 +211,8 @@ export class ChatPanel {
 
             const requestData: any = {
                 message: message,
-                session_id: this.sessionId
+                session_id: this.sessionId,
+                agent_type: this.agentType
             };
             if (workspaceDir) {
                 requestData.workspace_dir = workspaceDir;
@@ -489,6 +498,13 @@ export class ChatPanel {
                             <button id="rejectPatchButton" class="patch-button reject">Reject</button>
                         </div>
                     </div>
+                    <div class="agent-selector-container">
+                        <label for="agentTypeSelect">Agent Mode:</label>
+                        <select id="agentTypeSelect">
+                            <option value="react">ReAct (Fast, Reactive)</option>
+                            <option value="planact">PlanAct (Planned, Complex Tasks)</option>
+                        </select>
+                    </div>
                     <div class="chat-input-container">
                         <textarea 
                             id="messageInput" 
@@ -507,6 +523,7 @@ export class ChatPanel {
                     const chatMessages = document.getElementById('chatMessages');
                     const messageInput = document.getElementById('messageInput');
                     const sendButton = document.getElementById('sendButton');
+                    const agentTypeSelect = document.getElementById('agentTypeSelect');
                     const patchButtonsContainer = document.getElementById('patchButtonsContainer');
                     const patchFilePath = document.getElementById('patchFilePath');
                     const acceptPatchButton = document.getElementById('acceptPatchButton');
@@ -603,6 +620,15 @@ export class ChatPanel {
                             e.preventDefault();
                             sendMessage();
                         }
+                    });
+                    
+                    // Handle agent type selection change
+                    agentTypeSelect.addEventListener('change', (e) => {
+                        const selectedType = e.target.value;
+                        vscode.postMessage({
+                            command: 'changeAgentType',
+                            agentType: selectedType
+                        });
                     });
                     
                     // Handle messages from extension
