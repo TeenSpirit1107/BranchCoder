@@ -17,6 +17,8 @@ logger = Logger('apply_patch_tool', log_to_file=False)
 ENABLE_PATCH_SAVE = True  # Set to False to disable patch saving
 PATCH_SAVE_DIR = Path("/home/ym/Documents/Projects/Course/CSC4100/group_project/BranchCoder/logs/patches")
 
+# Configuration for patch checking
+FUZZY_MATCH_THERSHOLD = 0.9
 
 class ApplyPatchTool(MCPTool):
     """Tool for applying unified diff patches to files."""
@@ -516,7 +518,7 @@ class ApplyPatchTool(MCPTool):
                                 best_match = max(0, i - leading_empty)
                     
                     # Fallback to original old_lines if normalized didn't work well
-                    if best_score < 0.5:
+                    if best_score < FUZZY_MATCH_THERSHOLD:
                         logger.debug("Trying fuzzy match with original old_lines")
                         for i in range(len(current_lines) - len(old_lines) + 1):
                             match_count = sum(1 for j, old_line in enumerate(old_lines) 
@@ -526,7 +528,7 @@ class ApplyPatchTool(MCPTool):
                                 best_score = score
                                 best_match = i
                     
-                    if best_score < 0.5:
+                    if best_score < FUZZY_MATCH_THERSHOLD:
                         logger.error(f"Could not find patch location. Best match score: {best_score:.2f}")
                         logger.debug(f"Expected context ({len(old_lines)} lines, showing first 10):")
                         for i, line in enumerate(old_lines[:10], 1):
