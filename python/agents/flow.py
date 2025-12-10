@@ -57,6 +57,8 @@ class FlowAgent:
 
                 logger.info(f"Tool call: {tool_name} with args: {tool_args}")
 
+                is_report = False
+                
                 tool_result = None
                 async for event in execute_tool(ToolCallEvent(
                     message=f"Calling {tool_name}",
@@ -71,15 +73,17 @@ class FlowAgent:
                         yield event
                         tool_result = event.result
                     elif isinstance(event, ReportEvent):
+                        is_report = True
                         yield event
-                        return
+                    # TODO(Yimeng): fix looping logic
+                    if tool_result is None:
+                        tool_result = {"error": "Tool execution returned no result"}
 
-                # TODO(Yimeng): move this into for loop
-                if tool_result is None:
-                    tool_result = {"error": "Tool execution returned no result"}
-
-                self.memory.add_tool_call(session_id, iteration, tool_name, tool_args)
-                self.memory.add_tool_result(session_id, iteration, tool_result)
+                    self.memory.add_tool_call(session_id, iteration, tool_name, tool_args)
+                    self.memory.add_tool_result(session_id, iteration, tool_result)
+                
+                if is_report:
+                    return
             else:
                 answer_text = result.get("answer", "") or ""
                 if answer_text:
