@@ -77,6 +77,8 @@ logs/
 .env.production.local
 
 clear_logs.sh
+mv_log.sh
+sample_ws
 
 # Node.js
 node_modules/
