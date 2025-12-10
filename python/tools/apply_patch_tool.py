@@ -13,6 +13,88 @@ from tools.base_tool import MCPTool
 
 logger = Logger('apply_patch_tool', log_to_file=False)
 
+def _preprocess_patch_content(patch_content: str) -> str:
+    """
+    Preprocess patch content to fix common formatting issues.
+    
+    This function handles:
+    1. Escaped newlines (\\n) that should be actual newlines
+    2. Escaped quotes (\\" and \\')
+    3. Other escaped characters
+    
+    Args:
+        patch_content: Raw patch content string
+        
+    Returns:
+        Preprocessed patch content with fixed formatting
+    """
+    # Check if patch contains escaped characters that need fixing
+    has_escaped_newlines = '\\n' in patch_content
+    has_escaped_quotes = '\\"' in patch_content or "\\'" in patch_content
+    
+    if not has_escaped_newlines and not has_escaped_quotes:
+        # No preprocessing needed
+        return patch_content
+    
+    logger.info("Preprocessing patch content to fix escaped characters")
+    
+    # Split into lines for processing
+    lines = patch_content.split('\n')
+    processed_lines = []
+    
+    in_header = True
+    for line in lines:
+        # Keep header lines as-is (before first @@)
+        if in_header:
+            processed_lines.append(line)
+            if line.startswith('@@'):
+                in_header = False
+            continue
+        
+        # Check if this is a hunk header
+        if line.startswith('@@'):
+            processed_lines.append(line)
+            continue
+        
+        # Keep file header lines as-is
+        if line.startswith('---') or line.startswith('+++'):
+            processed_lines.append(line)
+            continue
+        
+        # For patch content lines, check if they contain escaped newlines
+        if '\\n' in line:
+            # Determine the prefix (space, -, +, or empty)
+            prefix = ''
+            content = line
+            if line.startswith(' '):
+                prefix = ' '
+                content = line[1:]
+            elif line.startswith('-'):
+                prefix = '-'
+                content = line[1:]
+            elif line.startswith('+'):
+                prefix = '+'
+                content = line[1:]
+            
+            # Replace escaped characters
+            content = content.replace('\\n', '\n')
+            content = content.replace('\\"', '"')
+            content = content.replace("\\'", "'")
+            
+            # Split by actual newlines and add prefix to each part
+            parts = content.split('\n')
+            for part in parts:
+                if part or len(parts) == 1:  # Keep empty lines unless trailing
+                    processed_lines.append(prefix + part)
+        else:
+            # Just unescape quotes if present
+            unescaped = line.replace('\\"', '"').replace("\\'", "'")
+            processed_lines.append(unescaped)
+    
+    result = '\n'.join(processed_lines)
+    logger.debug(f"Preprocessed patch: {len(lines)} lines -> {len(processed_lines)} lines")
+    return result
+
 # Configuration for patch saving
 ENABLE_PATCH_SAVE = True  # Set to False to disable patch saving
 PATCH_SAVE_DIR = Path("/home/ym/Documents/Projects/Course/CSC4100/group_project/BranchCoder/logs/patches")
@@ -791,6 +873,10 @@ class ApplyPatchTool(MCPTool):
                     "success": False,
                     "error": f"Failed to read patch file: {str(e)}"
                 }
+        
+        # Preprocess patch content to fix formatting issues
+        logger.info("Preprocessing patch content...")
+        patch_text = _preprocess_patch_content(patch_text)
         
         # Parse the patch
         logger.info("Parsing patch content...")
