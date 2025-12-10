@@ -3,14 +3,14 @@ from typing import Any, Dict, List, Optional
 from utils.logger import Logger
 from llm.chat_llm import AsyncChatClientWrapper
 from tools.tool_factory import get_tool_definitions, set_workspace_dir, execute_tool
-from models import ReportEvent, MessageEvent, ToolCallEvent, ToolResultEvent
+from models import ReportEvent, MessageEvent, ToolCallEvent, ToolResultEvent, BaseFlow
 from agents.memory import Memory
 from prompts.flow_prompt import PATCH_FAILURE_REFLECTION_PROMPT
 
 logger = Logger('flow', log_to_file=False)
 
 
-class FlowAgent:
+class ReActFlow(BaseFlow):
     MAX_ITERATION = 10
     PARALLEL_TOOL_NAME = "execute_parallel_tasks"
     PATCH_TOOL_NAME = "apply_patch"
@@ -142,3 +142,7 @@ class FlowAgent:
         logger.warning(f"Reached max iterations ({self.MAX_ITERATION}), returning error message")
         error_message = "Sorry. Hit max iterations limit"
         yield ReportEvent(message=error_message)
+
+
+# Backward compatibility alias
+FlowAgent = ReActFlow
