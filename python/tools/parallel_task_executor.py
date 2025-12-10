@@ -159,15 +159,18 @@ class ParallelTaskExecutorTool(MCPTool):
                     active_tasks.remove(index)
                     logger.debug(f"Subtask {index} completed")
                 else:
+                    # Filter out "Thinking" messages to avoid UI spam
+                    if isinstance(event, MessageEvent) and event.message.startswith("Thinking"):
+                        continue  # Skip this event entirely
+                    
                     # Add task identifier to event message for clarity
                     if isinstance(event, (ToolCallEvent, ToolResultEvent)):
                         # Prefix tool events with subtask number
                         original_message = event.message or ""
                         event.message = f"[子任务 {index + 1}] {original_message}"
                     elif isinstance(event, MessageEvent):
-                        if not event.message.startswith("Thinking"):
-                            original_message = event.message or ""
-                            event.message = f"[子任务 {index + 1}] {original_message}"
+                        original_message = event.message or ""
+                        event.message = f"[子任务 {index + 1}] {original_message}"
                     
                     yield event
             
