@@ -56,13 +56,13 @@ class ApplyPatchTool(MCPTool):
             "type": "function",
             "function": {
                 "name": "apply_patch",
-                "description": "Apply unified diff patches to files. Use this tool when you need to apply code changes to files. The target_file_path must be an absolute path (beginning with /).",
+                "description": "Apply unified diff patches to files. Use this tool when you need to apply code changes to files. The target_file_path can be either absolute (e.g., /home/user/file.py) or relative to workspace (e.g., main.py).",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "target_file_path": {
                             "type": "string",
-                            "description": "Target file absolute path (begin with /, not with workspace_dir)"
+                            "description": "Target file path. Can be absolute (e.g., /home/user/project/file.py) or relative to workspace directory (e.g., src/main.py or main.py). Relative paths will be automatically resolved using the workspace directory."
                         },
                         "patch_content": {
                             "type": "string",
@@ -668,13 +668,20 @@ class ApplyPatchTool(MCPTool):
         logger.info(f"Target file path: {target_file_path}")
         logger.info(f"Patch content length: {len(patch_content)} characters")
         
-        # Validate target_file_path is absolute
+        # Auto-fix relative paths by prepending workspace_dir
         if not os.path.isabs(target_file_path):
-            logger.error(f"target_file_path must be an absolute path, got: {target_file_path}")
-            return {
-                "success": False,
-                "error": f"target_file_path must be an absolute path, got: {target_file_path}"
-            }
+            if self.workspace_dir:
+                # Convert relative path to absolute using workspace_dir
+                original_path = target_file_path
+                target_file_path = os.path.join(self.workspace_dir, target_file_path)
+                logger.warning(f"Auto-fixed relative path: '{original_path}' -> '{target_file_path}'")
+                logger.info(f"Using workspace directory: {self.workspace_dir}")
+            else:
+                logger.error(f"target_file_path must be an absolute path, got: {target_file_path} (no workspace_dir set)")
+                return {
+                    "success": False,
+                    "error": f"target_file_path must be an absolute path, got: {target_file_path}"
+                }
         
         # Check if patch_content is a file path
         patch_text = patch_content
