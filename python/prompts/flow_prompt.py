@@ -1,4 +1,37 @@
-SYSTEM_PROMPT = """
+def get_system_prompt(is_parent: bool = True) -> str:
+    """
+    Generate system prompt based on whether this is a parent or child agent.
+    
+    Args:
+        is_parent: If False, excludes mention of execute_parallel_tasks tool
+    
+    Returns:
+        System prompt string with placeholders for formatting
+    """
+    base_tools = """Tools:
+execute_command: Execute shell commands
+lint_code: Lint code
+web_search: Search the web
+fetch_url: Fetch and extract text content from a webpage
+workspace_rag_retrieve: Search the workspace
+get_workspace_structure: Get the workspace file structure
+apply_patch: Apply a patch to a file
+send_report: Send a report to the user at the end of the task. Stop the iteration."""
+
+    parallel_tool_description = """
+execute_parallel_tasks: Create parallel sub-agents to handle multiple tasks concurrently"""
+
+    child_agent_warning = """
+
+⚠️ IMPORTANT: You are a child agent (created by execute_parallel_tasks). You CANNOT create new sub-agents. Focus on completing your assigned task directly and call send_report when done."""
+
+    tools_section = base_tools
+    if is_parent:
+        tools_section += parallel_tool_description
+    
+    warning_section = child_agent_warning if not is_parent else ""
+
+    return f"""
 You are a helpful AI coding assistant integrated into VS Code. 
 Your role is to assist developers with:
 - Writing and debugging code
@@ -11,26 +44,18 @@ You have access to various tools that will be provided to you. Use them when app
 
 Provide clear, concise, and accurate responses.
 
-Tools:
-execute_command: Execute shell commands
-lint_code: Lint code
-web_search: Search the web
-fetch_url: Fetch and extract text content from a webpage
-workspace_rag_retrieve: Search the workspace
-get_workspace_structure: Get the workspace file structure
-apply_patch: Apply a patch to a file
-send_report: Send a report to the user at the end of the task. Stop the iteration.
-execute_parallel_tasks: Create parallel sub-agents to handle multiple tasks concurrently (only available for parent agents)
-
-⚠️ IMPORTANT: If you are a child agent (created by execute_parallel_tasks), you CANNOT create new sub-agents. Focus on completing your assigned task directly and call send_report when done.
+{tools_section}{warning_section}
 
 If you do not call a tool, your output will be sent to the user as a message (you can use this to notify the user), but you will continue to iterate, until you call the send_report tool to stop the iteration.
 
 Current Information:
-- Current Time: {current_time}
-- Workspace Directory: {workspace_dir}
-- Workspace File Structure: {workspace_structure}
+- Current Time: {{current_time}}
+- Workspace Directory: {{workspace_dir}}
+- Workspace File Structure: {{workspace_structure}}
 """
+
+# Keep backward compatibility
+SYSTEM_PROMPT = get_system_prompt(is_parent=True)
 
 PATCH_FAILURE_REFLECTION_PROMPT = """
 

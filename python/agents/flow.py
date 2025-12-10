@@ -23,7 +23,7 @@ class FlowAgent:
         self.tools_definitions = get_tool_definitions(is_parent=is_parent)
         self.workspace_dir = workspace_dir
         set_workspace_dir(workspace_dir)
-        self.memory = Memory(workspace_dir)
+        self.memory = Memory(workspace_dir, is_parent=is_parent)
         self.consecutive_patch_failures = 0
         logger.info(f"Flow agent initialized with {len(self.tools_definitions)} tools, is_parent={is_parent}")
     

@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional
 from utils.logger import Logger
 from tools.tool_factory import execute_tool
 from models import ToolResultEvent, ToolCallEvent
-from prompts.flow_prompt import SYSTEM_PROMPT
+from prompts.flow_prompt import get_system_prompt
 
 logger = Logger('flow.memory', log_to_file=False)
 
@@ -16,8 +16,9 @@ MAX_HISTORY_MESSAGES = 50
 
 class Memory:
 
-    def __init__(self, workspace_dir: str, history_file: Optional[str] = None):
+    def __init__(self, workspace_dir: str, history_file: Optional[str] = None, is_parent: bool = True):
         self.workspace_dir = workspace_dir
+        self.is_parent = is_parent
         self.history_file = Path(history_file) if history_file else DEFAULT_HISTORY_FILE
         self._ensure_history_dir()
         self._histories: Dict[str, List[Dict[str, Any]]] = {}
@@ -101,7 +102,8 @@ class Memory:
             if isinstance(event, ToolResultEvent):
                 workspace_structure = event.result
         
-        return SYSTEM_PROMPT.format(
+        system_prompt = get_system_prompt(is_parent=self.is_parent)
+        return system_prompt.format(
             current_time=current_time,
             workspace_dir=self.workspace_dir,
             workspace_structure=workspace_structure
