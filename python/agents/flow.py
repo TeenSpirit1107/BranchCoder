@@ -16,15 +16,16 @@ class FlowAgent:
     PATCH_TOOL_NAME = "apply_patch"
     MAX_PATCH_FAILURES = 5
 
-    def __init__(self, workspace_dir: str):
+    def __init__(self, workspace_dir: str, is_parent: bool = True):
         self.llm_client = AsyncChatClientWrapper()
         logger.info("LLM client initialized successfully")
-        self.tools_definitions = get_tool_definitions()
+        self.is_parent = is_parent
+        self.tools_definitions = get_tool_definitions(is_parent=is_parent)
         self.workspace_dir = workspace_dir
         set_workspace_dir(workspace_dir)
         self.memory = Memory(workspace_dir)
         self.consecutive_patch_failures = 0
-        logger.info(f"Flow agent initialized with {len(self.tools_definitions)} tools")
+        logger.info(f"Flow agent initialized with {len(self.tools_definitions)} tools, is_parent={is_parent}")
     
     async def process(
         self,
@@ -57,6 +58,15 @@ class FlowAgent:
                 tool_args = dict(result.get("tool_args") or {})
 
                 if tool_name == self.PARALLEL_TOOL_NAME:
+                    # Check if this agent is allowed to create sub-agents
+                    if not self.is_parent:
+                        error_msg = "⚠️ This agent is not allowed to create sub-agents. Only parent agents can use execute_parallel_tasks."
+                        logger.warning(f"Blocked parallel task execution: agent is not a parent (session: {session_id})")
+                        yield MessageEvent(message=error_msg)
+                        self.memory.add_tool_call(session_id, iteration, tool_name, tool_args)
+                        self.memory.add_tool_result(session_id, iteration, {"success": False, "error": error_msg})
+                        continue
+                    
                     # TODO(Yimeng): fix redundant deepcopy (shouldn't have copied when init)
                     context_messages = copy.deepcopy(self.memory.get_messages())
                     tool_args.setdefault("context_messages", context_messages)

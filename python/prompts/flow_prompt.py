@@ -20,6 +20,9 @@ workspace_rag_retrieve: Search the workspace
 get_workspace_structure: Get the workspace file structure
 apply_patch: Apply a patch to a file
 send_report: Send a report to the user at the end of the task. Stop the iteration.
+execute_parallel_tasks: Create parallel sub-agents to handle multiple tasks concurrently (only available for parent agents)
+
+⚠️ IMPORTANT: If you are a child agent (created by execute_parallel_tasks), you CANNOT create new sub-agents. Focus on completing your assigned task directly and call send_report when done.
 
 If you do not call a tool, your output will be sent to the user as a message (you can use this to notify the user), but you will continue to iterate, until you call the send_report tool to stop the iteration.
 

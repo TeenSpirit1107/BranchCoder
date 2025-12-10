@@ -87,7 +87,8 @@ class ParallelTaskExecutorTool(MCPTool):
             try:
                 from agents.flow import FlowAgent
 
-                agent = FlowAgent(self.workspace_dir or "")
+                # Create child agent with is_parent=False to prevent further nesting
+                agent = FlowAgent(self.workspace_dir or "", is_parent=False)
                 async for event in agent.process(
                     task_description,
                     sub_session_id,
@@ -217,7 +218,8 @@ class ParallelTaskExecutorTool(MCPTool):
             try:
                 from agents.flow import FlowAgent
 
-                agent = FlowAgent(self.workspace_dir or "")
+                # Create child agent with is_parent=False to prevent further nesting
+                agent = FlowAgent(self.workspace_dir or "", is_parent=False)
                 async for event in agent.process(
                     task_description,
                     sub_session_id,
