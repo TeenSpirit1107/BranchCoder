@@ -73,7 +73,7 @@ class Logger:
                     log_dir = Path(base_dir)
                 else:
                     # Default to project root directory
-                    log_dir = Path("/home/ym/Documents/Projects/Course/CSC4100/group_project/BranchCoder/logs/logs")
+                    log_dir = Path("/home/yf/Desktop/logs")
                     # TODO(Yimeng): revert to previous implementation
                     # log_dir = Path(__file__).parent
                 log_file_path = log_dir / f"{name}.log"

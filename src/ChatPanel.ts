@@ -183,6 +183,111 @@ export class ChatPanel {
         }
     }
 
+    private async handleSearchReplaceToolCall(msg: any): Promise<void> {
+        try {
+            const toolArgs = msg.tool_args || {};
+            const filePath = toolArgs.file_path;
+            const oldString = toolArgs.old_string;
+            const newString = toolArgs.new_string;
+
+            if (!filePath || oldString === undefined || newString === undefined) {
+                console.warn('search_replace tool_call missing required parameters');
+                return;
+            }
+
+            // Resolve target file URI
+            let targetUri: vscode.Uri;
+            if (path.isAbsolute(filePath)) {
+                targetUri = vscode.Uri.file(filePath);
+            } else {
+                // Relative path - resolve from workspace
+                const workspaceFolders = vscode.workspace.workspaceFolders;
+                if (!workspaceFolders || workspaceFolders.length === 0) {
+                    throw new Error('No workspace folder found');
+                }
+                const workspaceDir = workspaceFolders[0].uri.fsPath;
+                targetUri = vscode.Uri.file(path.join(workspaceDir, filePath));
+            }
+
+            // Read current file content as beforeText
+            let beforeText: string;
+            try {
+                const doc = await vscode.workspace.openTextDocument(targetUri);
+                beforeText = doc.getText();
+            } catch (error: any) {
+                // File might not exist yet - use empty string
+                if (error.code === 'ENOENT' || error.message.includes('not found')) {
+                    beforeText = '';
+                } else {
+                    throw error;
+                }
+            }
+
+            // Apply search_replace to generate afterText
+            // Find the first occurrence of oldString and replace it
+            const index = beforeText.indexOf(oldString);
+            if (index === -1) {
+                // String not found - can't preview, but tool will handle the error
+                console.warn(`search_replace: old_string not found in file ${filePath}`);
+                return;
+            }
+
+            const afterText = beforeText.substring(0, index) + newString + beforeText.substring(index + oldString.length);
+
+            // Generate session ID and store it
+            const sessionId = String(Date.now());
+            
+            // Hide previous patch buttons if any (only if there was a previous patch)
+            if (this.currentPatchSessionId) {
+                this.hidePatchButtons();
+            }
+            
+            // Update current patch session ID
+            this.currentPatchSessionId = sessionId;
+            
+            // Store patch session (reuse patch preview infrastructure)
+            const { patchSessions } = await import('./patchPreview');
+            patchSessions.set(sessionId, {
+                beforeText,
+                afterText,
+                targetUri,
+                patchContent: `search_replace: ${filePath}`
+            });
+
+            // Automatically apply changes to code (preview mode)
+            const { computeTextEdits } = await import('./patchUtils');
+            const doc = await vscode.workspace.openTextDocument(targetUri);
+            const currentText = doc.getText();
+            const edits = computeTextEdits(currentText, afterText);
+            const edit = new vscode.WorkspaceEdit();
+            edit.set(targetUri, edits);
+            await vscode.workspace.applyEdit(edit);
+
+            // Show patch preview
+            await vscode.commands.executeCommand(
+                'aiChat.showPatchPreview',
+                targetUri,
+                beforeText,
+                afterText,
+                `search_replace: ${filePath}`
+            );
+
+            // Notify frontend to show accept/reject buttons
+            const relativePath = vscode.workspace.asRelativePath(targetUri, false);
+            this.webview.postMessage({
+                command: 'showPatchButtons',
+                sessionId: sessionId,
+                filePath: relativePath
+            });
+        } catch (error: any) {
+            console.error('Error handling search_replace tool_call:', error);
+            if (this.outputChannel) {
+                this.outputChannel.appendLine(`[ERROR] Failed to handle search_replace: ${error.message}`);
+            }
+            vscode.window.showErrorMessage(`Failed to show search_replace preview: ${error.message}`);
+        }
+    }
+
     private async callPythonAI(message: string): Promise<string> {
         return new Promise((resolve, reject) => {
             let command;
@@ -250,6 +355,16 @@ export class ChatPanel {
                                 console.error('Error handling apply_patch tool_call:', error);
                                 if (this.outputChannel) {
                                     this.outputChannel.appendLine(`[ERROR] Failed to handle apply_patch: ${error.message}`);
+                                }
+                            });
+                        }
+
+                        // Handle search_replace tool_call - show preview
+                        if (msg.type === 'tool_call' && msg.tool_name === 'search_replace') {
+                            this.handleSearchReplaceToolCall(msg).catch(error => {
+                                console.error('Error handling search_replace tool_call:', error);
+                                if (this.outputChannel) {
+                                    this.outputChannel.appendLine(`[ERROR] Failed to handle search_replace: ${error.message}`);
                                 }
                             });
                         }
