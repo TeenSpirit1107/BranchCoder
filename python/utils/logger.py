@@ -73,9 +73,8 @@ class Logger:
                     log_dir = Path(base_dir)
                 else:
                     # Default to project root directory
-                    log_dir = Path("/home/yf/Desktop/logs")
-                    # TODO(Yimeng): revert to previous implementation
-                    # log_dir = Path(__file__).parent
+                    project_root = Path(__file__).parent.parent.parent
+                    log_dir = project_root / "logs" / "logs"
                 log_file_path = log_dir / f"{name}.log"
             
             self._setup_file_handler(log_file_path, max_bytes, backup_count)

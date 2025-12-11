@@ -97,7 +97,9 @@ def _preprocess_patch_content(patch_content: str) -> str:
 
 # Configuration for patch saving
 ENABLE_PATCH_SAVE = True  # Set to False to disable patch saving
-PATCH_SAVE_DIR = Path("/home/yf/Desktop/patches")
+# Get project root directory (parent of python/ directory)
+_project_root = Path(__file__).parent.parent.parent
+PATCH_SAVE_DIR = _project_root / "logs" / "patches"
 
 # Configuration for patch checking
 FUZZY_MATCH_THERSHOLD = 0.9
