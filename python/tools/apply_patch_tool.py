@@ -97,7 +97,7 @@ def _preprocess_patch_content(patch_content: str) -> str:
 
 # Configuration for patch saving
 ENABLE_PATCH_SAVE = True  # Set to False to disable patch saving
-PATCH_SAVE_DIR = Path("/home/ym/Documents/Projects/Course/CSC4100/group_project/BranchCoder/logs/patches")
+PATCH_SAVE_DIR = Path("/home/yf/Desktop/patches")
 
 # Configuration for patch checking
 FUZZY_MATCH_THERSHOLD = 0.9
@@ -129,8 +129,8 @@ class ApplyPatchTool(MCPTool):
     
     @property
     def agent_tool(self) -> bool:
-        """This tool should be exposed to LLM agent for applying patches."""
-        return True
+        """This tool should NOT be exposed to LLM agent. Patches are applied automatically when LLM outputs patch content."""
+        return False
     
     def get_tool_definition(self) -> Dict[str, Any]:
         """Get the tool definition for LLM function calling."""

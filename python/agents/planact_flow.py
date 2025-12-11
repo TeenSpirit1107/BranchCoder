@@ -282,7 +282,8 @@ class PlanActFlow(BaseFlow):
                         if self.consecutive_patch_failures >= self.MAX_PATCH_FAILURES:
                             logger.error(f"Reached max consecutive patch failures ({self.MAX_PATCH_FAILURES}). Triggering reflection.")
                             reflection_message = PATCH_FAILURE_REFLECTION_PROMPT.format(
-                                failure_count=self.MAX_PATCH_FAILURES
+                                failure_count=self.MAX_PATCH_FAILURES,
+                                workspace_dir=self.workspace_dir
                             )
                             self.memory.messages.append({
                                 "role": "user",

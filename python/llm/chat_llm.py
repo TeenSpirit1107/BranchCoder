@@ -7,7 +7,7 @@ from utils.logger import Logger
 
 load_dotenv()
 
-logger = Logger('chat_llm', log_to_file=False)
+logger = Logger('chat_llm', log_to_file=True)
 
 class CompletionResult(TypedDict):
     type: Literal["tool_call", "answer"]
@@ -67,20 +67,56 @@ class AsyncChatClientWrapper:
         if response_format:
             kwargs["response_format"] = response_format
 
+        # Log LLM request
+        logger.info("=" * 80)
+        logger.info("LLM Request:")
+        logger.info(f"Model: {self.model}")
+        logger.info(f"Temperature: {temperature}")
+        logger.info(f"Tool Choice: {kwargs.get('tool_choice', 'none')}")
+        logger.info(f"Tools Count: {len(tools) if tools else 0}")
+        if tools:
+            tool_names = [tool.get('function', {}).get('name', 'unknown') for tool in tools if isinstance(tool, dict)]
+            logger.info(f"Available Tools: {', '.join(tool_names[:10])}{'...' if len(tool_names) > 10 else ''}")
+        
+        # Log messages (with truncation for very long messages)
+        logger.info(f"Messages Count: {len(messages)}")
+        for i, msg in enumerate(messages):
+            role = msg.get('role', 'unknown')
+            content = msg.get('content', '')
+            if isinstance(content, str):
+                content_preview = content[:200] + "..." if len(content) > 200 else content
+                logger.info(f"  Message {i+1} [{role}]: {content_preview}")
+            elif isinstance(content, list):
+                logger.info(f"  Message {i+1} [{role}]: [Complex content with {len(content)} parts]")
+            else:
+                logger.info(f"  Message {i+1} [{role}]: [Non-string content]")
+        
+        logger.info("-" * 80)
+        
         completion = await self.client.chat.completions.create(**kwargs)
         result = self._parse_completion(completion)
         
         # Log LLM response
-        logger.info("=" * 80)
         logger.info("LLM Response:")
         logger.info(f"Type: {result.get('type', 'unknown')}")
         if result.get("type") == "tool_call":
             logger.info(f"Tool Name: {result.get('tool_name', 'unknown')}")
-            logger.info(f"Tool Args: {json.dumps(result.get('tool_args', {}), ensure_ascii=False, indent=2)}")
+            tool_args = result.get('tool_args', {})
+            tool_args_str = json.dumps(tool_args, ensure_ascii=False, indent=2)
+            # Truncate very long tool args
+            if len(tool_args_str) > 2000:
+                logger.info(f"Tool Args (length: {len(tool_args_str)}):")
+                logger.info(tool_args_str[:1000] + "\n... [truncated] ...\n" + tool_args_str[-1000:])
+            else:
+                logger.info(f"Tool Args:")
+                logger.info(tool_args_str)
         else:
             response_text = result.get("answer", "") or ""
-            # Truncate very long responses for readability
-            if len(response_text) > 1000:
+            # Log full response, but truncate if extremely long
+            if len(response_text) > 5000:
+                logger.info(f"Response (length: {len(response_text)}):")
+                logger.info(response_text[:2500] + "\n... [truncated] ...\n" + response_text[-2500:])
+            elif len(response_text) > 1000:
                 logger.info(f"Response (length: {len(response_text)}):")
                 logger.info(response_text[:500] + "\n... [truncated] ...\n" + response_text[-500:])
             else:
@@ -90,7 +126,12 @@ class AsyncChatClientWrapper:
         # Log token usage
         usage = result.get("usage", {})
         if usage:
-            logger.info(f"Token Usage: prompt={usage.get('prompt_tokens', 0)}, completion={usage.get('completion_tokens', 0)}, total={usage.get('total_tokens', 0)}")
+            prompt_tokens = usage.get('prompt_tokens', 0)
+            completion_tokens = usage.get('completion_tokens', 0)
+            total_tokens = usage.get('total_tokens', 0)
+            logger.info(f"Token Usage: prompt={prompt_tokens}, completion={completion_tokens}, total={total_tokens}")
+        else:
+            logger.warning("No token usage information available")
         logger.info("=" * 80)
         
         return result

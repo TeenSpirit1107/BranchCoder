@@ -198,6 +198,18 @@ async def execute_tool(tool_call_event: ToolCallEvent) -> AsyncGenerator[BaseEve
             yield ReportEvent(message=message)
             return
         
+        if tool_name == "send_message":
+            from models import MessageEvent
+            message = result.get("message", "")
+            yield MessageEvent(message=message)
+            # Also yield tool result for memory tracking
+            yield ToolResultEvent(
+                message=f'Message sent',
+                tool_name=tool_name,
+                result=result
+            )
+            return
+        
         result_notification = tool.get_result_notification(result)
         if result_notification:
             yield ToolResultEvent(

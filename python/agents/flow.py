@@ -1,6 +1,7 @@
 import copy
 from typing import Any, Dict, List, Optional
 from utils.logger import Logger
+from utils.patch_parser import is_patch_content, extract_patch_info
 from llm.chat_llm import AsyncChatClientWrapper
 from tools.tool_factory import get_tool_definitions, set_workspace_dir, execute_tool
 from models import ReportEvent, MessageEvent, ToolCallEvent, ToolResultEvent, BaseFlow
@@ -161,37 +162,6 @@ class ReActFlow(BaseFlow):
                     self.memory.add_tool_call(session_id, iteration, tool_name, tool_args)
                     self.memory.add_tool_result(session_id, iteration, tool_result)
                 
-                # Track patch tool failures
-                if tool_name == self.PATCH_TOOL_NAME:
-                    is_patch_failed = (
-                        tool_result is not None and 
-                        (isinstance(tool_result, dict) and 
-                         (tool_result.get("success") is False or 
-                          "error" in tool_result or 
-                          tool_result.get("status") == "failed"))
-                    )
-                    
-                    if is_patch_failed:
-                        self.consecutive_patch_failures += 1
-                        logger.warning(f"Patch tool failed. Consecutive failures: {self.consecutive_patch_failures}/{self.MAX_PATCH_FAILURES}")
-                        
-                        if self.consecutive_patch_failures >= self.MAX_PATCH_FAILURES:
-                            logger.error(f"Reached max consecutive patch failures ({self.MAX_PATCH_FAILURES}). Triggering reflection.")
-                            reflection_message = PATCH_FAILURE_REFLECTION_PROMPT.format(
-                                failure_count=self.MAX_PATCH_FAILURES
-                            )
-                            self.memory.messages.append({
-                                "role": "user",
-                                "content": reflection_message
-                            })
-                            self.consecutive_patch_failures = 0  # Reset counter
-                            yield MessageEvent(message=reflection_message)
-                    else:
-                        # Patch succeeded, reset counter
-                        if self.consecutive_patch_failures > 0:
-                            logger.info(f"Patch tool succeeded. Resetting failure counter from {self.consecutive_patch_failures} to 0.")
-                        self.consecutive_patch_failures = 0
-                
                 if is_report:
                     # Before returning, validate that if patches were applied, linter was run after
                     if not self._validate_patch_linter_sequence():
@@ -206,10 +176,98 @@ class ReActFlow(BaseFlow):
                     return
             else:
                 answer_text = result.get("answer", "") or ""
-                if answer_text:
+                
+                # Check if the answer is patch content
+                patch_info_list = extract_patch_info(answer_text)
+                if patch_info_list:
+                    logger.info(f"Detected patch content in LLM response. Found {len(patch_info_list)} file(s) to patch")
+                    
+                    # Add assistant message with patch content to memory
                     self.memory.add_assistant_message(session_id, answer_text)
-                yield MessageEvent(message=answer_text)
-                return
+                    
+                    # Apply patches for each file
+                    all_patches_succeeded = True
+                    for target_file_path, patch_content in patch_info_list:
+                        logger.info(f"Auto-applying patch to {target_file_path}")
+                        
+                        # Automatically call apply_patch tool
+                        tool_args = {
+                            "target_file_path": target_file_path,
+                            "patch_content": patch_content,
+                            "dry_run": False
+                        }
+                        
+                        # Execute patch tool
+                        tool_result = None
+                        async for event in execute_tool(ToolCallEvent(
+                            message=f"Auto-applying patch to {target_file_path}",
+                            tool_name=self.PATCH_TOOL_NAME,
+                            tool_args=tool_args,
+                        )):
+                            if isinstance(event, MessageEvent):
+                                yield event
+                            elif isinstance(event, ToolCallEvent):
+                                yield event
+                            elif isinstance(event, ToolResultEvent):
+                                yield event
+                                tool_result = event.result
+                            elif isinstance(event, ReportEvent):
+                                yield event
+                                return
+                        
+                        if tool_result is None:
+                            tool_result = {"error": "Patch tool execution returned no result"}
+                        
+                        self.memory.add_tool_call(session_id, iteration, self.PATCH_TOOL_NAME, tool_args)
+                        self.memory.add_tool_result(session_id, iteration, tool_result)
+                        
+                        # Track patch tool failures (same logic as manual patch calls)
+                        is_patch_failed = (
+                            tool_result is not None and 
+                            (isinstance(tool_result, dict) and 
+                             (tool_result.get("success") is False or 
+                              "error" in tool_result or 
+                              tool_result.get("status") == "failed"))
+                        )
+                        
+                        if is_patch_failed:
+                            all_patches_succeeded = False
+                            self.consecutive_patch_failures += 1
+                            logger.warning(f"Auto-applied patch failed for {target_file_path}. Consecutive failures: {self.consecutive_patch_failures}/{self.MAX_PATCH_FAILURES}")
+                            
+                            if self.consecutive_patch_failures >= self.MAX_PATCH_FAILURES:
+                                logger.error(f"Reached max consecutive patch failures ({self.MAX_PATCH_FAILURES}). Triggering reflection.")
+                                reflection_message = PATCH_FAILURE_REFLECTION_PROMPT.format(
+                                    failure_count=self.MAX_PATCH_FAILURES,
+                                    workspace_dir=self.workspace_dir
+                                )
+                                self.memory.messages.append({
+                                    "role": "user",
+                                    "content": reflection_message
+                                })
+                                self.consecutive_patch_failures = 0  # Reset counter
+                                yield MessageEvent(message=reflection_message)
+                                # Continue iteration after reflection
+                                continue
+                        else:
+                            # Patch succeeded for this file
+                            logger.info(f"Auto-applied patch succeeded for {target_file_path}")
+                    
+                    # If all patches succeeded, reset counter
+                    if all_patches_succeeded and self.consecutive_patch_failures > 0:
+                        logger.info(f"All auto-applied patches succeeded. Resetting failure counter from {self.consecutive_patch_failures} to 0.")
+                        self.consecutive_patch_failures = 0
+                    
+                    # Continue iteration after applying patches
+                    continue
+                else:
+                    # Not patch content - this shouldn't happen according to the prompt,
+                    # but handle it gracefully
+                    if answer_text:
+                        logger.warning(f"LLM returned non-patch content without calling send_message tool: {answer_text[:100]}")
+                        self.memory.add_assistant_message(session_id, answer_text)
+                        yield MessageEvent(message=answer_text)
+                    return
 
         logger.warning(f"Reached max iterations ({self.MAX_ITERATION}), returning error message")
         error_message = "Sorry. Hit max iterations limit"
