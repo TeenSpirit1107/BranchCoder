@@ -129,7 +129,7 @@ class ApplyPatchTool(MCPTool):
     
     @property
     def agent_tool(self) -> bool:
-        """This tool should NOT be exposed to LLM agent. Patches are applied automatically when LLM outputs patch content."""
+        """This tool should NOT be exposed to LLM agent. Replaced by search_replace tool for better reliability."""
         return False
     
     def get_tool_definition(self) -> Dict[str, Any]:

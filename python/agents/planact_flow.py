@@ -6,7 +6,7 @@ from tools.tool_factory import get_tool_definitions, set_workspace_dir, execute_
 from models import ReportEvent, MessageEvent, ToolCallEvent, ToolResultEvent, BaseFlow
 from agents.memory import Memory
 from prompts.flow_prompt import (
-    PATCH_FAILURE_REFLECTION_PROMPT,
+    SEARCH_REPLACE_FAILURE_REFLECTION_PROMPT,
     PLANNING_PROMPT,
     PLAN_REVISION_PROMPT
 )
@@ -25,8 +25,8 @@ class PlanActFlow(BaseFlow):
     MAX_ITERATION = 40 # Higher limit since planning adds overhead
     MAX_PLANNING_ITERATIONS = 3  # Max times to revise the plan
     PARALLEL_TOOL_NAME = "execute_parallel_tasks"
-    PATCH_TOOL_NAME = "apply_patch"
-    MAX_PATCH_FAILURES = 5
+    SEARCH_REPLACE_TOOL_NAME = "search_replace"
+    MAX_SEARCH_REPLACE_FAILURES = 5
     
     def __init__(self, workspace_dir: str, is_parent: bool = True):
         self.llm_client = AsyncChatClientWrapper()
@@ -36,7 +36,7 @@ class PlanActFlow(BaseFlow):
         self.workspace_dir = workspace_dir
         set_workspace_dir(workspace_dir)
         self.memory = Memory(workspace_dir, is_parent=is_parent)
-        self.consecutive_patch_failures = 0
+        self.consecutive_search_replace_failures = 0
         self.current_plan = None
         self.plan_revision_count = 0
         logger.info(f"PlanAct Flow agent initialized with {len(self.tools_definitions)} tools, is_parent={is_parent}")
@@ -152,7 +152,7 @@ class PlanActFlow(BaseFlow):
             self.memory.add_user_message(session_id, message)
         
         # Reset counters for new user message
-        self.consecutive_patch_failures = 0
+        self.consecutive_search_replace_failures = 0
         self.current_plan = None
         self.plan_revision_count = 0
         
@@ -265,9 +265,9 @@ class PlanActFlow(BaseFlow):
                     # Success - reset failure counter
                     consecutive_failures = 0
                 
-                # Track patch tool failures specifically
-                if tool_name == self.PATCH_TOOL_NAME:
-                    is_patch_failed = (
+                # Track search_replace tool failures specifically
+                if tool_name == self.SEARCH_REPLACE_TOOL_NAME:
+                    is_search_replace_failed = (
                         tool_result is not None and 
                         (isinstance(tool_result, dict) and 
                          (tool_result.get("success") is False or 
@@ -275,32 +275,32 @@ class PlanActFlow(BaseFlow):
                           tool_result.get("status") == "failed"))
                     )
                     
-                    if is_patch_failed:
-                        self.consecutive_patch_failures += 1
-                        logger.warning(f"Patch tool failed. Consecutive failures: {self.consecutive_patch_failures}/{self.MAX_PATCH_FAILURES}")
+                    if is_search_replace_failed:
+                        self.consecutive_search_replace_failures += 1
+                        logger.warning(f"Search_replace tool failed. Consecutive failures: {self.consecutive_search_replace_failures}/{self.MAX_SEARCH_REPLACE_FAILURES}")
                         
-                        if self.consecutive_patch_failures >= self.MAX_PATCH_FAILURES:
-                            logger.error(f"Reached max consecutive patch failures ({self.MAX_PATCH_FAILURES}). Triggering reflection.")
-                            reflection_message = PATCH_FAILURE_REFLECTION_PROMPT.format(
-                                failure_count=self.MAX_PATCH_FAILURES,
+                        if self.consecutive_search_replace_failures >= self.MAX_SEARCH_REPLACE_FAILURES:
+                            logger.error(f"Reached max consecutive search_replace failures ({self.MAX_SEARCH_REPLACE_FAILURES}). Triggering reflection.")
+                            reflection_message = SEARCH_REPLACE_FAILURE_REFLECTION_PROMPT.format(
+                                failure_count=self.MAX_SEARCH_REPLACE_FAILURES,
                                 workspace_dir=self.workspace_dir
                             )
                             self.memory.messages.append({
                                 "role": "user",
                                 "content": reflection_message
                             })
-                            self.consecutive_patch_failures = 0
+                            self.consecutive_search_replace_failures = 0
                             yield MessageEvent(message=reflection_message)
                             
                             # Also trigger plan revision
                             if self.current_plan:
-                                async for event in self._revise_plan(session_id, "Repeated patch failures"):
+                                async for event in self._revise_plan(session_id, "Repeated search_replace failures"):
                                     yield event
                     else:
-                        # Patch succeeded
-                        if self.consecutive_patch_failures > 0:
-                            logger.info(f"Patch tool succeeded. Resetting failure counter from {self.consecutive_patch_failures} to 0.")
-                        self.consecutive_patch_failures = 0
+                        # Search_replace succeeded
+                        if self.consecutive_search_replace_failures > 0:
+                            logger.info(f"Search_replace tool succeeded. Resetting failure counter from {self.consecutive_search_replace_failures} to 0.")
+                        self.consecutive_search_replace_failures = 0
                 
                 if is_report:
                     return

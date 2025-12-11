@@ -1,12 +1,11 @@
 import copy
 from typing import Any, Dict, List, Optional
 from utils.logger import Logger
-from utils.patch_parser import is_patch_content, extract_patch_info
 from llm.chat_llm import AsyncChatClientWrapper
 from tools.tool_factory import get_tool_definitions, set_workspace_dir, execute_tool
 from models import ReportEvent, MessageEvent, ToolCallEvent, ToolResultEvent, BaseFlow
 from agents.memory import Memory
-from prompts.flow_prompt import PATCH_FAILURE_REFLECTION_PROMPT
+from prompts.flow_prompt import SEARCH_REPLACE_FAILURE_REFLECTION_PROMPT
 
 logger = Logger('flow', log_to_file=False)
 
@@ -14,9 +13,9 @@ logger = Logger('flow', log_to_file=False)
 class ReActFlow(BaseFlow):
     MAX_ITERATION = 30
     PARALLEL_TOOL_NAME = "execute_parallel_tasks"
-    PATCH_TOOL_NAME = "apply_patch"
+    SEARCH_REPLACE_TOOL_NAME = "search_replace"
     LINTER_TOOL_NAME = "lint_code"
-    MAX_PATCH_FAILURES = 5
+    MAX_SEARCH_REPLACE_FAILURES = 5
 
     def __init__(self, workspace_dir: str, is_parent: bool = True):
         self.llm_client = AsyncChatClientWrapper()
@@ -26,31 +25,31 @@ class ReActFlow(BaseFlow):
         self.workspace_dir = workspace_dir
         set_workspace_dir(workspace_dir)
         self.memory = Memory(workspace_dir, is_parent=is_parent)
-        self.consecutive_patch_failures = 0
+        self.consecutive_search_replace_failures = 0
         logger.info(f"Flow agent initialized with {len(self.tools_definitions)} tools, is_parent={is_parent}")
     
-    def _validate_patch_linter_sequence(self) -> bool:
+    def _validate_search_replace_linter_sequence(self) -> bool:
         """
-        Validate that if patch tool was used, linter tool was run successfully after the last patch.
+        Validate that if search_replace tool was used, linter tool was run successfully after the last search_replace.
         
         Returns:
-            True if validation passes (no patches or linter ran successfully after last patch)
-            False if validation fails (patches exist but no successful linter after last patch)
+            True if validation passes (no search_replace calls or linter ran successfully after last search_replace)
+            False if validation fails (search_replace exists but no successful linter after last search_replace)
         """
         messages = self.memory.get_messages()
         
-        last_patch_index = -1
+        last_search_replace_index = -1
         last_linter_index = -1
         last_linter_result = None
         
-        # Find the last patch tool call and last linter tool call
+        # Find the last search_replace tool call and last linter tool call
         for i, msg in enumerate(messages):
             if msg.get("role") == "assistant" and msg.get("tool_calls"):
                 tool_calls = msg.get("tool_calls", [])
                 for tool_call in tool_calls:
                     function_name = tool_call.get("function", {}).get("name", "")
-                    if function_name == self.PATCH_TOOL_NAME:
-                        last_patch_index = i
+                    if function_name == self.SEARCH_REPLACE_TOOL_NAME:
+                        last_search_replace_index = i
                     elif function_name == self.LINTER_TOOL_NAME:
                         last_linter_index = i
                         # Get the result of this linter call (should be in the next tool message)
@@ -61,14 +60,14 @@ class ReActFlow(BaseFlow):
                             except:
                                 last_linter_result = None
         
-        # If no patch tool was used, validation passes
-        if last_patch_index == -1:
-            logger.debug("No patch tool calls found, validation passes")
+        # If no search_replace tool was used, validation passes
+        if last_search_replace_index == -1:
+            logger.debug("No search_replace tool calls found, validation passes")
             return True
         
-        # If patch was used but no linter was run after it, validation fails
-        if last_linter_index <= last_patch_index:
-            logger.warning(f"Patch tool used at index {last_patch_index}, but no linter call after it (last linter at {last_linter_index})")
+        # If search_replace was used but no linter was run after it, validation fails
+        if last_linter_index <= last_search_replace_index:
+            logger.warning(f"Search_replace tool used at index {last_search_replace_index}, but no linter call after it (last linter at {last_linter_index})")
             return False
         
         # Check if the last linter call was successful
@@ -87,7 +86,7 @@ class ReActFlow(BaseFlow):
             logger.warning(f"Linter found {error_count} error(s) in the code")
             return False
         
-        logger.info("Patch-linter sequence validation passed: no syntax errors found")
+        logger.info("Search_replace-linter sequence validation passed: no syntax errors found")
         return True
     
     async def process(
@@ -105,8 +104,8 @@ class ReActFlow(BaseFlow):
             self.memory.messages.append({"role": "user", "content": message})
             self.memory.add_user_message(session_id, message)
         
-        # Reset patch failure counter for new user message
-        self.consecutive_patch_failures = 0
+        # Reset search_replace failure counter for new user message
+        self.consecutive_search_replace_failures = 0
         iteration = 0
         while iteration < self.MAX_ITERATION:
             iteration += 1
@@ -163,9 +162,9 @@ class ReActFlow(BaseFlow):
                     self.memory.add_tool_result(session_id, iteration, tool_result)
                 
                 if is_report:
-                    # Before returning, validate that if patches were applied, linter was run after
-                    if not self._validate_patch_linter_sequence():
-                        error_msg = "⚠️ Patch tool was used but linter was not run successfully after the last patch. Please run the linter tool to verify the code changes."
+                    # Before returning, validate that if search_replace was used, linter was run after
+                    if not self._validate_search_replace_linter_sequence():
+                        error_msg = "⚠️ Search_replace tool was used but linter was not run successfully after the last search_replace. Please run the linter tool to verify the code changes."
                         logger.warning(f"Report blocked: {error_msg}")
                         yield MessageEvent(message=error_msg)
                         self.memory.messages.append({
@@ -174,100 +173,50 @@ class ReActFlow(BaseFlow):
                         })
                         continue
                     return
-            else:
-                answer_text = result.get("answer", "") or ""
                 
-                # Check if the answer is patch content
-                patch_info_list = extract_patch_info(answer_text)
-                if patch_info_list:
-                    logger.info(f"Detected patch content in LLM response. Found {len(patch_info_list)} file(s) to patch")
+                # Track search_replace tool failures
+                if tool_name == self.SEARCH_REPLACE_TOOL_NAME:
+                    is_search_replace_failed = (
+                        tool_result is not None and 
+                        (isinstance(tool_result, dict) and 
+                         (tool_result.get("success") is False or 
+                          "error" in tool_result or 
+                          tool_result.get("status") == "failed"))
+                    )
                     
-                    # Add assistant message with patch content to memory
+                    if is_search_replace_failed:
+                        self.consecutive_search_replace_failures += 1
+                        logger.warning(f"Search_replace tool failed. Consecutive failures: {self.consecutive_search_replace_failures}/{self.MAX_SEARCH_REPLACE_FAILURES}")
+                        
+                        if self.consecutive_search_replace_failures >= self.MAX_SEARCH_REPLACE_FAILURES:
+                            logger.error(f"Reached max consecutive search_replace failures ({self.MAX_SEARCH_REPLACE_FAILURES}). Triggering reflection.")
+                            reflection_message = SEARCH_REPLACE_FAILURE_REFLECTION_PROMPT.format(
+                                failure_count=self.MAX_SEARCH_REPLACE_FAILURES,
+                                workspace_dir=self.workspace_dir
+                            )
+                            self.memory.messages.append({
+                                "role": "user",
+                                "content": reflection_message
+                            })
+                            self.consecutive_search_replace_failures = 0
+                            yield MessageEvent(message=reflection_message)
+                            # Continue iteration after reflection
+                            continue
+                    else:
+                        # Search_replace succeeded
+                        if self.consecutive_search_replace_failures > 0:
+                            logger.info(f"Search_replace tool succeeded. Resetting failure counter from {self.consecutive_search_replace_failures} to 0.")
+                        self.consecutive_search_replace_failures = 0
+            else:
+                # LLM returned text response without tool calls
+                answer_text = result.get("answer", "") or ""
+                if answer_text:
+                    # According to the prompt, LLM should use send_message tool for messages
+                    # But handle gracefully if it doesn't
+                    logger.warning(f"LLM returned text response without calling send_message tool: {answer_text[:100]}")
                     self.memory.add_assistant_message(session_id, answer_text)
-                    
-                    # Apply patches for each file
-                    all_patches_succeeded = True
-                    for target_file_path, patch_content in patch_info_list:
-                        logger.info(f"Auto-applying patch to {target_file_path}")
-                        
-                        # Automatically call apply_patch tool
-                        tool_args = {
-                            "target_file_path": target_file_path,
-                            "patch_content": patch_content,
-                            "dry_run": False
-                        }
-                        
-                        # Execute patch tool
-                        tool_result = None
-                        async for event in execute_tool(ToolCallEvent(
-                            message=f"Auto-applying patch to {target_file_path}",
-                            tool_name=self.PATCH_TOOL_NAME,
-                            tool_args=tool_args,
-                        )):
-                            if isinstance(event, MessageEvent):
-                                yield event
-                            elif isinstance(event, ToolCallEvent):
-                                yield event
-                            elif isinstance(event, ToolResultEvent):
-                                yield event
-                                tool_result = event.result
-                            elif isinstance(event, ReportEvent):
-                                yield event
-                                return
-                        
-                        if tool_result is None:
-                            tool_result = {"error": "Patch tool execution returned no result"}
-                        
-                        self.memory.add_tool_call(session_id, iteration, self.PATCH_TOOL_NAME, tool_args)
-                        self.memory.add_tool_result(session_id, iteration, tool_result)
-                        
-                        # Track patch tool failures (same logic as manual patch calls)
-                        is_patch_failed = (
-                            tool_result is not None and 
-                            (isinstance(tool_result, dict) and 
-                             (tool_result.get("success") is False or 
-                              "error" in tool_result or 
-                              tool_result.get("status") == "failed"))
-                        )
-                        
-                        if is_patch_failed:
-                            all_patches_succeeded = False
-                            self.consecutive_patch_failures += 1
-                            logger.warning(f"Auto-applied patch failed for {target_file_path}. Consecutive failures: {self.consecutive_patch_failures}/{self.MAX_PATCH_FAILURES}")
-                            
-                            if self.consecutive_patch_failures >= self.MAX_PATCH_FAILURES:
-                                logger.error(f"Reached max consecutive patch failures ({self.MAX_PATCH_FAILURES}). Triggering reflection.")
-                                reflection_message = PATCH_FAILURE_REFLECTION_PROMPT.format(
-                                    failure_count=self.MAX_PATCH_FAILURES,
-                                    workspace_dir=self.workspace_dir
-                                )
-                                self.memory.messages.append({
-                                    "role": "user",
-                                    "content": reflection_message
-                                })
-                                self.consecutive_patch_failures = 0  # Reset counter
-                                yield MessageEvent(message=reflection_message)
-                                # Continue iteration after reflection
-                                continue
-                        else:
-                            # Patch succeeded for this file
-                            logger.info(f"Auto-applied patch succeeded for {target_file_path}")
-                    
-                    # If all patches succeeded, reset counter
-                    if all_patches_succeeded and self.consecutive_patch_failures > 0:
-                        logger.info(f"All auto-applied patches succeeded. Resetting failure counter from {self.consecutive_patch_failures} to 0.")
-                        self.consecutive_patch_failures = 0
-                    
-                    # Continue iteration after applying patches
-                    continue
-                else:
-                    # Not patch content - this shouldn't happen according to the prompt,
-                    # but handle it gracefully
-                    if answer_text:
-                        logger.warning(f"LLM returned non-patch content without calling send_message tool: {answer_text[:100]}")
-                        self.memory.add_assistant_message(session_id, answer_text)
-                        yield MessageEvent(message=answer_text)
-                    return
+                    yield MessageEvent(message=answer_text)
+                return
 
         logger.warning(f"Reached max iterations ({self.MAX_ITERATION}), returning error message")
         error_message = "Sorry. Hit max iterations limit"
