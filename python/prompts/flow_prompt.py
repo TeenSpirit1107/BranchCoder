@@ -40,7 +40,7 @@ FILE READING STRATEGY:
 - When you want to apply code changes, simply output the patch content directly in unified diff format:
   Format: --- /absolute/path/to/file\n+++ /absolute/path/to/file\n@@ -start,count +start,count @@\n-context line\n+modified line\n context line
 - ⚠️ ABSOLUTE PATH REQUIREMENT: The patch MUST use absolute file paths (starting with /). Relative paths are NOT allowed.
-- 📁 WORKSPACE PATH: Your workspace absolute path is: {{workspace_dir}}
+- 📁 WORKSPACE PATH: Your workspace absolute path is: {workspace_dir}
   - To construct an absolute path for a file in the workspace, combine the workspace path with the relative path.
   - Example: If workspace is "/home/user/project" and file is "src/utils.py", use "/home/user/project/src/utils.py"
   - Always use the full absolute path starting with "/" in your patches.
@@ -74,9 +74,9 @@ EXAMPLES:
 Remember: Use send_message tool to communicate with the user. When you need to apply code changes, output patch content directly in unified diff format (without calling any tool) - it will be automatically applied.
 
 Current Information:
-- Current Time: {{current_time}}
-- Workspace Directory: {{workspace_dir}}
-- Workspace File Structure: {{workspace_structure}}
+- Current Time: {current_time}
+- Workspace Directory: {workspace_dir}
+- Workspace File Structure: {workspace_structure}
 """
 
 
@@ -105,7 +105,7 @@ Available Tools:
 - When you want to apply code changes, simply output the patch content directly in unified diff format:
   Format: --- /absolute/path/to/file\n+++ /absolute/path/to/file\n@@ -start,count +start,count @@\n-context line\n+modified line\n context line
 - ⚠️ ABSOLUTE PATH REQUIREMENT: The patch MUST use absolute file paths (starting with /). Relative paths are NOT allowed.
-- 📁 WORKSPACE PATH: Your workspace absolute path is: {{workspace_dir}}
+- 📁 WORKSPACE PATH: Your workspace absolute path is: {workspace_dir}
   - To construct an absolute path for a file in the workspace, combine the workspace path with the relative path.
   - Example: If workspace is "/home/user/project" and file is "src/utils.py", use "/home/user/project/src/utils.py"
   - Always use the full absolute path starting with "/" in your patches.
@@ -124,9 +124,9 @@ Workflow:
 4. Call send_report with your results
 
 Current Information:
-- Current Time: {{current_time}}
-- Workspace Directory: {{workspace_dir}}
-- Workspace File Structure: {{workspace_structure}}
+- Current Time: {current_time}
+- Workspace Directory: {workspace_dir}
+- Workspace File Structure: {workspace_structure}
 """
 
 # Keep backward compatibility
