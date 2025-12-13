@@ -70,6 +70,10 @@ coverage.xml
 *.log
 logs/
 
+# Documents
+
+doc/main.tex
+
 # Local development settings
 .env.local
 .env.development.local
