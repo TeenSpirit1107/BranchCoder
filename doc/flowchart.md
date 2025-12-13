@@ -18,17 +18,15 @@ flowchart TB
         PW3["ReAct / PlanAct Subflow"]
   end
  subgraph s2["MCP"]
-        AP["apply patch"]
-        EC["execute command"]
         SR["search replace"]
         LNT["lint code"]
         WEB["web search"]
-        FU["fetch url"]
         WRR["workspace RAG retrieve"]
-        SM["send message"]
         SRP["send report"]
-        EPT["execute parallel tasks"]
         ETC["etc."]
+        SR --> LNT --> WEB 
+        WRR --> SRP --> ETC
+        
   end
  subgraph s3["RAG"]
         A["Codebase"]
@@ -92,4 +90,9 @@ class DONE terminal;
 style s1 fill:#F5FAFF,stroke:#1565C0,stroke-width:2px
 style s2 fill:#F1F8F4,stroke:#2E7D32,stroke-width:2px
 style s3 fill:#FAF5FC,stroke:#6A1B9A,stroke-width:2px
+
+%% IMPORTANT:
+%% Replace 0,1,2,3,4 with the actual edge indices for the MCP chain in your rendered order
+linkStyle 0,1,2,3,4 stroke-width:0px;
+
 ```
