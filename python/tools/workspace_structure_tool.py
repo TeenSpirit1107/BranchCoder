@@ -104,8 +104,8 @@ class WorkspaceStructureTool(MCPTool):
         """
         max_depth = tool_args.get("max_depth", 5)
         include_files = tool_args.get("include_files", True)
-        workspace_info = f"深度: {max_depth if max_depth > 0 else '无限制'}, 包含文件: {'是' if include_files else '否'}"
-        return f"正在获取工作区结构 ({workspace_info})"
+        workspace_info = f"depth: {max_depth if max_depth > 0 else 'unlimited'}, include files: {'yes' if include_files else 'no'}"
+        return f"Getting workspace structure ({workspace_info})"
     
     def get_result_notification(self, tool_result: Dict[str, Any]) -> Optional[str]:
         """
@@ -119,10 +119,10 @@ class WorkspaceStructureTool(MCPTool):
         """
         success = tool_result.get("success", False)
         if not success:
-            error = tool_result.get("error", "未知错误")
-            return f"获取工作区结构失败: {error}"
+            error = tool_result.get("error", "Unknown error")
+            return f"Failed to get workspace structure: {error}"
         
-        return "工作区结构获取完成"
+        return "Workspace structure retrieved successfully"
     
     def _should_ignore(self, path: Path, ignore_patterns: List[str], include_hidden: bool) -> bool:
         """

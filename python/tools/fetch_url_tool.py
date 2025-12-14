@@ -64,7 +64,7 @@ class FetchUrlTool(MCPTool):
         url = tool_args.get("url", "")
         # Truncate long URLs for display
         display_url = url[:60] + "..." if len(url) > 60 else url
-        return f"正在获取网页内容: {display_url}"
+        return f"Fetching webpage content: {display_url}"
     
     def get_result_notification(self, tool_result: Dict[str, Any]) -> Optional[str]:
         """
@@ -77,14 +77,14 @@ class FetchUrlTool(MCPTool):
             Custom notification message string
         """
         if "error" in tool_result:
-            error = tool_result.get("error", "未知错误")
-            return f"获取网页内容失败: {error}"
+            error = tool_result.get("error", "Unknown error")
+            return f"Failed to fetch webpage content: {error}"
         
         length = tool_result.get("length", 0)
         if length > 0:
-            return f"成功获取网页内容，共{length}个字符"
+            return f"Successfully fetched webpage content, {length} characters total"
         else:
-            return "获取网页内容完成，但内容为空"
+            return "Webpage content fetch completed, but content is empty"
     
     async def execute(self, url: str, max_chars: int = 8000) -> Dict[str, Any]:
         """

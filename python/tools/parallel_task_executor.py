@@ -65,7 +65,7 @@ class ParallelTaskExecutorTool(MCPTool):
 
     def get_call_notification(self, tool_args: Dict[str, Any]) -> Optional[str]:
         task_count = len(tool_args.get("tasks") or [])
-        return f"启动 {task_count} 个并行子任务..."
+        return f"Starting {task_count} parallel subtasks..."
 
     def get_result_notification(self, tool_result: Dict[str, Any]) -> Optional[str]:
         return tool_result.get("summary")
@@ -81,7 +81,7 @@ class ParallelTaskExecutorTool(MCPTool):
         This is used when we want to stream events to the UI.
         """
         if not tasks:
-            yield MessageEvent(message="没有提供要并行执行的任务")
+            yield MessageEvent(message="No tasks provided for parallel execution")
             return
 
         logger.info(f"Executing {len(tasks)} parallel tasks with streaming")
@@ -117,7 +117,7 @@ class ParallelTaskExecutorTool(MCPTool):
             except Exception as exc:  # pragma: no cover - best-effort handling
                 logger.error(f"Subtask {index} failed: {exc}", exc_info=True)
                 final_message = f"Error: {exc}"
-                await event_queue.put((index, MessageEvent(message=f"子任务 {index + 1} 失败: {exc}")))
+                await event_queue.put((index, MessageEvent(message=f"Subtask {index + 1} failed: {exc}")))
             finally:
                 # Signal completion
                 await event_queue.put((index, None))
@@ -125,7 +125,7 @@ class ParallelTaskExecutorTool(MCPTool):
             return {
                 "task_id": index,
                 "task": task_description,
-                "result": final_message or "未收到子代理的回应",
+                "result": final_message or "No response from sub-agent",
             }
 
         # Start all subtasks
@@ -179,10 +179,10 @@ class ParallelTaskExecutorTool(MCPTool):
                     if isinstance(event, (ToolCallEvent, ToolResultEvent)):
                         # Prefix tool events with subtask number
                         original_message = event.message or ""
-                        event.message = f"[子任务 {index + 1}] {original_message}"
+                        event.message = f"[Subtask {index + 1}] {original_message}"
                     elif isinstance(event, MessageEvent):
                         original_message = event.message or ""
-                        event.message = f"[子任务 {index + 1}] {original_message}"
+                        event.message = f"[Subtask {index + 1}] {original_message}"
                     
                     yield event
             
@@ -194,11 +194,11 @@ class ParallelTaskExecutorTool(MCPTool):
         results = await asyncio.gather(*subtask_tasks)
         
         # Generate summary
-        summary_lines = ["并行执行结果:"]
+        summary_lines = ["Parallel Execution Results:"]
         for res in results:
-            summary_lines.append(f"--- 任务 {res['task_id'] + 1} ---")
-            summary_lines.append(f"描述: {res['task']}")
-            summary_lines.append(f"结果: {res['result']}")
+            summary_lines.append(f"--- Task {res['task_id'] + 1} ---")
+            summary_lines.append(f"Description: {res['task']}")
+            summary_lines.append(f"Result: {res['result']}")
             summary_lines.append("")
 
         summary = "\n".join(summary_lines).strip()
@@ -215,7 +215,7 @@ class ParallelTaskExecutorTool(MCPTool):
         if not tasks:
             return {
                 "success": False,
-                "error": "没有提供要并行执行的任务",
+                "error": "No tasks provided for parallel execution",
             }
 
         logger.info(f"Executing {len(tasks)} parallel tasks")
@@ -248,7 +248,7 @@ class ParallelTaskExecutorTool(MCPTool):
             return {
                 "task_id": index,
                 "task": task_description,
-                "result": final_message or "未收到子代理的回应",
+                "result": final_message or "No response from sub-agent",
             }
 
         coroutines = [run_subtask(i, task) for i, task in enumerate(tasks)]

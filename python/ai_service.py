@@ -109,7 +109,7 @@ async def get_ai_response(
 
     except Exception as e:
         logger.error(f"Error in get_ai_response: {e}", exc_info=True)
-        yield {"type": "final_message", "message": f"错误: {str(e)}"}
+        yield {"type": "final_message", "message": f"Error: {str(e)}"}
         raise
 
 
@@ -187,7 +187,7 @@ async def async_main():
     except Exception as e:
         logger.error(f"Error in async_main: {e}", exc_info=True)
         # Send error as streaming message
-        error_msg = {"type": "final_message", "message": f"错误: {str(e)}"}
+        error_msg = {"type": "final_message", "message": f"Error: {str(e)}"}
         print(json.dumps(error_msg, ensure_ascii=False), flush=True)
         sys.exit(1)
 

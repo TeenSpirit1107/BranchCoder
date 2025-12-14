@@ -89,7 +89,7 @@ class WebSearchTool(MCPTool):
         search_type = tool_args.get("search_type", "general")
         # Truncate long queries for display
         display_query = query[:50] + "..." if len(query) > 50 else query
-        return f"正在搜索: {display_query} (类型: {search_type})"
+        return f"Searching: {display_query} (type: {search_type})"
     
     def get_result_notification(self, tool_result: Dict[str, Any]) -> Optional[str]:
         """
@@ -103,14 +103,14 @@ class WebSearchTool(MCPTool):
         """
         status = tool_result.get("status", "error")
         if status == "error":
-            error = tool_result.get("error", "未知错误")
-            return f"搜索失败: {error}"
+            error = tool_result.get("error", "Unknown error")
+            return f"Search failed: {error}"
         
         total_results = tool_result.get("total_results", 0)
         if total_results == 0:
-            return "搜索完成，未找到结果"
+            return "Search completed, no results found"
         else:
-            return f"搜索完成，找到{total_results}个结果"
+            return f"Search completed, found {total_results} result(s)"
     
     def _search_with_ddgs(
         self,

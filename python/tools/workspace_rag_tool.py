@@ -125,7 +125,7 @@ class WorkspaceRAGTool(MCPTool):
         query = tool_args.get("query", "")
         # Truncate long queries for display
         display_query = query[:50] + "..." if len(query) > 50 else query
-        return f"正在检索代码: {display_query}"
+        return f"Retrieving code: {display_query}"
     
     def get_result_notification(self, tool_result: Dict[str, Any]) -> Optional[str]:
         """
@@ -139,25 +139,25 @@ class WorkspaceRAGTool(MCPTool):
         """
         success = tool_result.get("success", False)
         if not success:
-            error = tool_result.get("error", "未知错误")
-            return f"代码检索失败: {error}"
+            error = tool_result.get("error", "Unknown error")
+            return f"Code retrieval failed: {error}"
         
         count = tool_result.get("count", 0)
         by_type = tool_result.get("by_type", {})
         
         if count == 0:
-            return "代码检索完成，未找到相关结果"
+            return "Code retrieval completed, no relevant results found"
         
         type_summary = []
         if by_type.get("file", 0) > 0:
-            type_summary.append(f"{by_type['file']}个文件")
+            type_summary.append(f"{by_type['file']} file(s)")
         if by_type.get("function", 0) > 0:
-            type_summary.append(f"{by_type['function']}个函数")
+            type_summary.append(f"{by_type['function']} function(s)")
         if by_type.get("class", 0) > 0:
-            type_summary.append(f"{by_type['class']}个类")
+            type_summary.append(f"{by_type['class']} class(es)")
         
-        summary = "、".join(type_summary) if type_summary else f"{count}个结果"
-        return f"代码检索完成，找到{summary}"
+        summary = ", ".join(type_summary) if type_summary else f"{count} result(s)"
+        return f"Code retrieval completed, found {summary}"
     
     async def execute(self, query: str) -> Dict[str, Any]:
         """

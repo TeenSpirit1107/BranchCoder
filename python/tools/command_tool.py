@@ -158,7 +158,7 @@ class CommandTool(MCPTool):
         command = tool_args.get("command", "")
         # Truncate long commands for display
         display_command = command[:50] + "..." if len(command) > 50 else command
-        return f"正在执行命令: {display_command}"
+        return f"Executing command: {display_command}"
     
     def get_result_notification(self, tool_result: Dict[str, Any]) -> Optional[str]:
         """
@@ -175,10 +175,10 @@ class CommandTool(MCPTool):
         returncode = tool_result.get("returncode", -1)
         
         if success:
-            return f"命令执行成功 (返回码: {returncode})"
+            return f"Command executed successfully (return code: {returncode})"
         else:
-            error = tool_result.get("error", "未知错误")
-            return f"命令执行失败: {error}"
+            error = tool_result.get("error", "Unknown error")
+            return f"Command execution failed: {error}"
     
     async def execute(self, command: str, timeout: int = 30) -> Dict[str, Any]:
         """

@@ -27,11 +27,11 @@ class AsyncChatClientWrapper:
         proxy = os.getenv("OPENAI_PROXY")
 
         if not api_key:
-            raise ValueError("❌ 缺少 OPENAI_API_KEY")
+            raise ValueError("❌ Missing OPENAI_API_KEY")
         if not model:
-            raise ValueError("❌ 缺少 OPENAI_MODEL")
+            raise ValueError("❌ Missing OPENAI_MODEL")
         if not base_url:
-            raise ValueError("❌ 缺少 OPENAI_BASE_URL")
+            raise ValueError("❌ Missing OPENAI_BASE_URL")
         if proxy:
             os.environ["HTTP_PROXY"] = proxy
             os.environ["HTTPS_PROXY"] = proxy

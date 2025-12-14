@@ -89,7 +89,7 @@ class SearchReplaceTool(MCPTool):
         start_content = tool_args.get("start_line_content", "")[:50]
         end_content = tool_args.get("end_line_content", "")[:50]
         new_preview = tool_args.get("new_string", "")[:50]
-        return f"正在替换代码块: {file_path}\n起始行: {start_content}...\n结束行: {end_content}...\n新代码: {new_preview}..."
+        return f"Replacing code block: {file_path}\nStart line: {start_content}...\nEnd line: {end_content}...\nNew code: {new_preview}..."
     
     def get_result_notification(self, tool_result: Dict[str, Any]) -> Optional[str]:
         """Get custom notification for search_replace tool result."""
@@ -99,10 +99,10 @@ class SearchReplaceTool(MCPTool):
             start_line = tool_result.get("start_line", 0)
             end_line = tool_result.get("end_line", 0)
             lines_replaced = tool_result.get("lines_replaced", 0)
-            return f"✅ 替换成功 (第 {start_line}-{end_line} 行, 共 {lines_replaced} 行)"
+            return f"✅ Replacement successful (lines {start_line}-{end_line}, {lines_replaced} lines total)"
         else:
-            error = tool_result.get("error", "未知错误")
-            return f"❌ 替换失败: {error}"
+            error = tool_result.get("error", "Unknown error")
+            return f"❌ Replacement failed: {error}"
     
     def _normalize_line_endings(self, text: str) -> str:
         """
@@ -384,8 +384,8 @@ class SearchReplaceTool(MCPTool):
                 logger.error(f"file_path must be absolute or workspace_dir must be set")
                 return {
                     "success": False,
-                    "error": f"路径错误: 必须提供绝对路径或设置工作区目录\n收到路径: {file_path}",
-                    "suggestion": "请使用绝对路径或确保工作区目录已设置"
+                    "error": f"Path error: Must provide absolute path or set workspace directory\nReceived path: {file_path}",
+                    "suggestion": "Please use absolute path or ensure workspace directory is set"
                 }
         
         resolved_path = Path(file_path).resolve()
@@ -396,7 +396,7 @@ class SearchReplaceTool(MCPTool):
             logger.error(f"File does not exist: {resolved_path}")
             return {
                 "success": False,
-                "error": f"文件不存在: {resolved_path}",
+                "error": f"File does not exist: {resolved_path}",
                 "file_path": str(resolved_path)
             }
         
@@ -435,9 +435,9 @@ class SearchReplaceTool(MCPTool):
                     logger.error(f"Start line content not found: {start_line_content[:100]}")
                     return {
                         "success": False,
-                        "error": f"未找到起始行锚点: {start_line_content[:100]}",
+                        "error": f"Start line anchor not found: {start_line_content[:100]}",
                         "file_path": str(resolved_path),
-                        "suggestion": "请检查起始行内容是否正确，确保文件中有匹配的行"
+                        "suggestion": "Please check if the start line content is correct and ensure there is a matching line in the file"
                     }
                 
                 # Find all possible matches (start_line, end_line pairs)
@@ -456,10 +456,10 @@ class SearchReplaceTool(MCPTool):
                     logger.error(f"End line content not found after any start line: {end_line_content[:100]}")
                     return {
                         "success": False,
-                        "error": f"未找到结束行锚点: {end_line_content[:100]}（在任何起始行之后）",
+                        "error": f"End line anchor not found: {end_line_content[:100]} (after any start line)",
                         "file_path": str(resolved_path),
                         "start_lines_found": [idx + 1 for idx in start_line_indices],
-                        "suggestion": "请检查结束行内容是否正确，确保在起始行之后有匹配的行"
+                        "suggestion": "Please check if the end line content is correct and ensure there is a matching line after the start line"
                     }
                 
                 # If multiple matches found, use estimated_line_count to select the best match
@@ -476,11 +476,11 @@ class SearchReplaceTool(MCPTool):
                         start_line_idx, end_line_idx, _ = matches[0]
                         return {
                             "success": False,
-                            "error": f"找到 {len(matches)} 处匹配，但未提供 estimated_line_count 参数。请提供 estimated_line_count 以确定要替换的位置。",
+                            "error": f"Found {len(matches)} matches, but estimated_line_count parameter not provided. Please provide estimated_line_count to determine which location to replace.",
                             "file_path": str(resolved_path),
                             "matches_found": len(matches),
                             "match_locations": [(s+1, e+1, lc) for s, e, lc in matches],
-                            "suggestion": "请提供 estimated_line_count 参数以帮助工具选择正确的匹配位置"
+                            "suggestion": "Please provide estimated_line_count parameter to help the tool select the correct match location"
                         }
                 else:
                     # Single match found
@@ -535,7 +535,7 @@ class SearchReplaceTool(MCPTool):
                     "start_line": start_line_idx + 1,
                     "end_line": end_line_idx + 1,
                     "lines_replaced": end_line_idx - start_line_idx + 1,
-                    "message": f"成功替换第 {start_line_idx + 1} 到 {end_line_idx + 1} 行"
+                    "message": f"Successfully replaced lines {start_line_idx + 1} to {end_line_idx + 1}"
                 }
                 
         except Exception as e:

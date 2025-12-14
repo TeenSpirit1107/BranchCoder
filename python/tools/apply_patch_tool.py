@@ -178,8 +178,8 @@ class ApplyPatchTool(MCPTool):
         dry_run = tool_args.get("dry_run", False)
         # Truncate long patch content for display
         display_content = patch_content[:50] + "..." if len(patch_content) > 50 else patch_content
-        mode = "验证" if dry_run else "应用"
-        return f"正在{mode}补丁到 {target_file_path}: {display_content}"
+        mode = "Validating" if dry_run else "Applying"
+        return f"{mode} patch to {target_file_path}: {display_content}"
     
     def get_result_notification(self, tool_result: Dict[str, Any]) -> Optional[str]:
         """
@@ -196,14 +196,14 @@ class ApplyPatchTool(MCPTool):
         patches_total = tool_result.get("patches_total", 0)
         
         if success:
-            return f"✅ 补丁应用成功 ({patches_applied}/{patches_total})"
+            return f"✅ Patch applied successfully ({patches_applied}/{patches_total})"
         else:
             # Build detailed error message
             error_parts = []
             
             # Get main error message
-            main_error = tool_result.get("error", "未知错误")
-            error_parts.append(f"❌ 补丁应用失败: {main_error}")
+            main_error = tool_result.get("error", "Unknown error")
+            error_parts.append(f"❌ Patch application failed: {main_error}")
             
             # Check if there are detailed results
             results = tool_result.get("results", [])
@@ -213,34 +213,34 @@ class ApplyPatchTool(MCPTool):
                 # Add file path if available
                 file_path = result.get("file_path")
                 if file_path:
-                    error_parts.append(f"📁 文件路径: {file_path}")
+                    error_parts.append(f"📁 File path: {file_path}")
                 
                 # Add match score if available (for fuzzy match failures)
                 best_match_score = result.get("best_match_score")
                 if best_match_score is not None:
-                    error_parts.append(f"🎯 最佳匹配分数: {best_match_score:.2%} (需要 ≥ {FUZZY_MATCH_THERSHOLD:.0%})")
+                    error_parts.append(f"🎯 Best match score: {best_match_score:.2%} (requires ≥ {FUZZY_MATCH_THERSHOLD:.0%})")
                 
                 # Add best match location if available
                 best_match_location = result.get("best_match_location")
                 if best_match_location:
-                    error_parts.append(f"📍 最接近位置: 第 {best_match_location} 行")
+                    error_parts.append(f"📍 Closest location: line {best_match_location}")
                 
                 # Add line count information
                 expected_lines = result.get("expected_lines_count")
                 actual_lines = result.get("actual_lines_count")
                 if expected_lines is not None and actual_lines is not None:
-                    error_parts.append(f"📊 行数信息: 期望 {expected_lines} 行，实际文件 {actual_lines} 行")
+                    error_parts.append(f"📊 Line count info: expected {expected_lines} lines, actual file has {actual_lines} lines")
                 
                 # Add context preview if available
                 expected_context = result.get("expected_context")
                 if expected_context and len(expected_context) > 0:
                     preview = expected_context[0][:60] + "..." if len(expected_context[0]) > 60 else expected_context[0]
-                    error_parts.append(f"🔍 期望上下文首行: {preview}")
+                    error_parts.append(f"🔍 Expected context first line: {preview}")
                 
                 # Add suggestion if available
                 suggestion = result.get("suggestion")
                 if suggestion:
-                    error_parts.append(f"💡 建议: {suggestion}")
+                    error_parts.append(f"💡 Suggestion: {suggestion}")
             
             return "\n".join(error_parts)
     
@@ -544,21 +544,21 @@ class ApplyPatchTool(MCPTool):
             
             # Check if parent directory exists
             if not parent_dir.exists():
-                suggestions.append(f"父目录不存在: {parent_dir}")
+                suggestions.append(f"Parent directory does not exist: {parent_dir}")
             else:
                 # List files in parent directory for suggestions
                 try:
                     similar_files = [f.name for f in parent_dir.iterdir() if f.is_file()]
                     if similar_files:
-                        suggestions.append(f"父目录中的文件: {', '.join(similar_files[:5])}")
+                        suggestions.append(f"Files in parent directory: {', '.join(similar_files[:5])}")
                         if len(similar_files) > 5:
-                            suggestions.append(f"... 还有 {len(similar_files) - 5} 个文件")
+                            suggestions.append(f"... and {len(similar_files) - 5} more files")
                 except Exception:
                     pass
             
             # Check if workspace_dir is set
             if self.workspace_dir:
-                suggestions.append(f"工作区目录: {self.workspace_dir}")
+                suggestions.append(f"Workspace directory: {self.workspace_dir}")
                 # Try to find similar files in workspace
                 try:
                     workspace_path = Path(self.workspace_dir)
@@ -566,13 +566,13 @@ class ApplyPatchTool(MCPTool):
                         filename = resolved_path.name
                         matching_files = list(workspace_path.rglob(filename))
                         if matching_files:
-                            suggestions.append(f"在工作区中找到同名文件: {', '.join(str(f) for f in matching_files[:3])}")
+                            suggestions.append(f"Found files with same name in workspace: {', '.join(str(f) for f in matching_files[:3])}")
                 except Exception:
                     pass
             
-            error_msg = f"文件不存在: {resolved_path}"
+            error_msg = f"File does not exist: {resolved_path}"
             if suggestions:
-                error_msg += "\n💡 提示:\n  - " + "\n  - ".join(suggestions)
+                error_msg += "\n💡 Hints:\n  - " + "\n  - ".join(suggestions)
             
             return {
                 "success": False,
@@ -581,7 +581,7 @@ class ApplyPatchTool(MCPTool):
                 "parent_directory": str(parent_dir),
                 "parent_exists": parent_dir.exists(),
                 "workspace_dir": self.workspace_dir,
-                "suggestion": "请检查文件路径是否正确。如果使用相对路径，请确保提供了正确的工作区目录。"
+                "suggestion": "Please check if the file path is correct. If using relative paths, ensure the workspace directory is properly set."
             }
         
         logger.info(f"File exists, proceeding with patch application")
@@ -846,19 +846,19 @@ class ApplyPatchTool(MCPTool):
                 logger.info(f"Using workspace directory: {self.workspace_dir}")
             else:
                 logger.error(f"target_file_path must be an absolute path, got: {target_file_path} (no workspace_dir set)")
-                error_msg = f"❌ 路径错误: 必须提供绝对路径\n"
-                error_msg += f"📝 收到的路径: {target_file_path}\n"
-                error_msg += f"⚠️  问题: 这是一个相对路径，但没有设置工作区目录\n"
-                error_msg += f"💡 解决方案:\n"
-                error_msg += f"  1. 使用完整的绝对路径 (如: /home/user/project/file.py)\n"
-                error_msg += f"  2. 或确保工作区目录已正确设置"
+                error_msg = f"❌ Path error: Must provide absolute path\n"
+                error_msg += f"📝 Received path: {target_file_path}\n"
+                error_msg += f"⚠️  Issue: This is a relative path, but workspace directory is not set\n"
+                error_msg += f"💡 Solution:\n"
+                error_msg += f"  1. Use a full absolute path (e.g., /home/user/project/file.py)\n"
+                error_msg += f"  2. Or ensure workspace directory is properly set"
                 return {
                     "success": False,
                     "error": error_msg,
                     "received_path": target_file_path,
                     "is_absolute": False,
                     "workspace_dir": None,
-                    "suggestion": "请使用绝对路径或确保工作区目录已设置。绝对路径示例: /home/user/project/src/main.py"
+                    "suggestion": "Please use absolute path or ensure workspace directory is set. Example absolute path: /home/user/project/src/main.py"
                 }
         
         # Check if patch_content is a file path
@@ -887,11 +887,11 @@ class ApplyPatchTool(MCPTool):
             logger.info(f"Parsed {len(patches)} patch(es) from content")
         except Exception as e:
             logger.error(f"Error parsing patch: {e}", exc_info=True)
-            error_msg = f"❌ 补丁解析失败\n"
-            error_msg += f"📝 错误详情: {str(e)}\n"
-            error_msg += f"📊 补丁内容长度: {len(patch_text)} 字符\n"
-            error_msg += f"🔍 补丁内容预览: {patch_text[:200]}...\n" if len(patch_text) > 200 else f"🔍 补丁内容: {patch_text}\n"
-            error_msg += f"💡 提示: 请检查补丁格式是否正确"
+            error_msg = f"❌ Patch parsing failed\n"
+            error_msg += f"📝 Error details: {str(e)}\n"
+            error_msg += f"📊 Patch content length: {len(patch_text)} characters\n"
+            error_msg += f"🔍 Patch content preview: {patch_text[:200]}...\n" if len(patch_text) > 200 else f"🔍 Patch content: {patch_text}\n"
+            error_msg += f"💡 Hint: Please check if the patch format is correct"
             return {
                 "success": False,
                 "error": error_msg,
@@ -902,11 +902,11 @@ class ApplyPatchTool(MCPTool):
         
         if not patches:
             logger.error("No valid patches found in patch content")
-            error_msg = f"❌ 未找到有效的补丁内容\n"
-            error_msg += f"📊 补丁内容长度: {len(patch_text)} 字符\n"
-            error_msg += f"🔍 补丁内容预览:\n{patch_text[:300]}...\n" if len(patch_text) > 300 else f"🔍 补丁内容:\n{patch_text}\n"
-            error_msg += f"💡 要求: 补丁应该使用统一差异格式 (unified diff format)\n"
-            error_msg += f"   格式示例:\n"
+            error_msg = f"❌ No valid patch content found\n"
+            error_msg += f"📊 Patch content length: {len(patch_text)} characters\n"
+            error_msg += f"🔍 Patch content preview:\n{patch_text[:300]}...\n" if len(patch_text) > 300 else f"🔍 Patch content:\n{patch_text}\n"
+            error_msg += f"💡 Requirement: Patch should use unified diff format\n"
+            error_msg += f"   Format example:\n"
             error_msg += f"   --- a/file.py\n"
             error_msg += f"   +++ b/file.py\n"
             error_msg += f"   @@ -1,3 +1,3 @@\n"
@@ -918,7 +918,7 @@ class ApplyPatchTool(MCPTool):
                 "error": error_msg,
                 "patch_length": len(patch_text),
                 "patch_preview": patch_text[:500] if len(patch_text) > 500 else patch_text,
-                "suggestion": "请确保补丁格式正确，使用 '---' 和 '+++' 开头，并包含 '@@ ... @@' 行号标记"
+                "suggestion": "Please ensure patch format is correct, starting with '---' and '+++', and including '@@ ... @@' line number markers"
             }
         
         # Log parsed patches

@@ -726,7 +726,7 @@ export class ChatPanel {
                         let contentHtml = '';
                         if (evt.type === 'tool_call' || evt.type === 'tool_result') {
                             const toolName = evt.tool_name || 'unknown';
-                            const toolLabel = evt.type === 'tool_call' ? '🔧 调用工具' : '✅ 工具完成';
+                            const toolLabel = evt.type === 'tool_call' ? '🔧 Calling Tool' : '✅ Tool Completed';
                             contentHtml = '<div class="tool-header"><strong>' + toolLabel + ':</strong> <code>' + toolName + '</code></div>';
                             if (evt.message) {
                                 contentHtml += '<div class="tool-message">' + renderMarkdown(evt.message) + '</div>';

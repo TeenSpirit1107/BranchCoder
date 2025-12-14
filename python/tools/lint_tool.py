@@ -69,11 +69,11 @@ class LintTool(MCPTool):
         """
         file_path = tool_args.get("file_path")
         if file_path:
-            return f"正在检查代码: {file_path}"
+            return f"Checking code: {file_path}"
         else:
             code = tool_args.get("code", "")
             code_preview = code[:30] + "..." if len(code) > 30 else code
-            return f"正在检查代码: {code_preview}"
+            return f"Checking code: {code_preview}"
     
     def get_result_notification(self, tool_result: Dict[str, Any]) -> Optional[str]:
         """
@@ -87,24 +87,24 @@ class LintTool(MCPTool):
         """
         success = tool_result.get("success", False)
         if not success:
-            error = tool_result.get("error", "未知错误")
-            return f"代码检查失败: {error}"
+            error = tool_result.get("error", "Unknown error")
+            return f"Code check failed: {error}"
         
         total_issues = tool_result.get("total_issues", 0)
         error_count = tool_result.get("error_count", 0)
         warning_count = tool_result.get("warning_count", 0)
         
         if total_issues == 0:
-            return "代码检查完成，未发现任何问题"
+            return "Code check completed, no issues found"
         else:
             issue_summary = []
             if error_count > 0:
-                issue_summary.append(f"{error_count}个错误")
+                issue_summary.append(f"{error_count} error(s)")
             if warning_count > 0:
-                issue_summary.append(f"{warning_count}个警告")
+                issue_summary.append(f"{warning_count} warning(s)")
             
-            summary = "、".join(issue_summary) if issue_summary else f"{total_issues}个问题"
-            return f"代码检查完成，发现{summary}"
+            summary = ", ".join(issue_summary) if issue_summary else f"{total_issues} issue(s)"
+            return f"Code check completed, found {summary}"
     
     def _check_python_syntax(self, code: str, file_path: Optional[str] = None) -> List[Dict[str, Any]]:
         """
