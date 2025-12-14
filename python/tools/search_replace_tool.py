@@ -4,6 +4,7 @@ Search Replace Tool - Replace code blocks by content matching
 """
 
 import os
+import asyncio
 from pathlib import Path
 from typing import Dict, Any, Optional
 from utils.logger import Logger
@@ -14,6 +15,10 @@ logger = Logger('search_replace_tool', log_to_file=False)
 
 class SearchReplaceTool(MCPTool):
     """Tool for replacing code blocks by content matching (no line numbers needed)."""
+    
+    # Class-level dictionary to store file locks (shared across all instances)
+    _file_locks: Dict[str, asyncio.Lock] = {}
+    _locks_lock: Optional[asyncio.Lock] = None  # Lock to protect the _file_locks dictionary
     
     def __init__(self):
         """Initialize search replace tool."""
@@ -120,6 +125,25 @@ class SearchReplaceTool(MCPTool):
         """Get line number for a character position."""
         return content[:position].count('\n') + 1
     
+    async def _get_file_lock(self, file_path: str) -> asyncio.Lock:
+        """
+        Get or create an asyncio lock for a specific file.
+        
+        Args:
+            file_path: Absolute path to the file
+            
+        Returns:
+            asyncio.Lock instance for the file
+        """
+        # Initialize _locks_lock if not already created
+        if self._locks_lock is None:
+            self._locks_lock = asyncio.Lock()
+        
+        async with self._locks_lock:
+            if file_path not in self._file_locks:
+                self._file_locks[file_path] = asyncio.Lock()
+            return self._file_locks[file_path]
+    
     async def execute(
         self, 
         file_path: str, 
@@ -172,106 +196,115 @@ class SearchReplaceTool(MCPTool):
                 "file_path": str(resolved_path)
             }
         
+        # Get file lock to ensure exclusive access
+        file_lock = await self._get_file_lock(str(resolved_path))
+        logger.info(f"Acquiring lock for file: {resolved_path}")
+        
         try:
-            # Read file content
-            logger.debug(f"Reading file content from: {resolved_path}")
-            with open(resolved_path, 'r', encoding='utf-8') as f:
-                content = f.read()
-            
-            logger.debug(f"File has {len(content)} characters, {content.count(chr(10))} lines")
-            
-            # Find all matches
-            matches = self._find_all_matches(content, old_string)
-            logger.info(f"Found {len(matches)} match(es) for old_string")
-            
-            if len(matches) == 0:
-                logger.error("No matches found for old_string")
+            # Acquire lock before modifying file
+            async with file_lock:
+                logger.info(f"Lock acquired for file: {resolved_path}")
                 
-                # Try to provide helpful debugging info
-                # Check if there are similar strings (fuzzy match)
-                old_lines = old_string.split('\n')
-                content_lines = content.split('\n')
+                # Read file content
+                logger.debug(f"Reading file content from: {resolved_path}")
+                with open(resolved_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
                 
-                # Find lines that partially match
-                similar_lines = []
-                for i, old_line in enumerate(old_lines[:5]):  # Check first 5 lines
-                    if old_line.strip():
-                        for j, content_line in enumerate(content_lines):
-                            if old_line.strip() in content_line or content_line.strip() in old_line:
-                                similar_lines.append((j + 1, content_line[:80]))
-                                if len(similar_lines) >= 3:
-                                    break
+                logger.debug(f"File has {len(content)} characters, {content.count(chr(10))} lines")
                 
-                error_msg = f"未找到匹配的代码块"
-                if similar_lines:
-                    error_msg += f"\n💡 提示: 在文件中找到相似的行:\n"
-                    for line_num, line_content in similar_lines:
-                        error_msg += f"  第 {line_num} 行: {line_content}...\n"
-                error_msg += f"\n请检查:\n"
-                error_msg += f"  1. old_string 是否包含足够的上下文（函数签名、注释等）\n"
-                error_msg += f"  2. 空白字符和格式是否完全匹配\n"
-                error_msg += f"  3. 文件内容是否已更改"
+                # Find all matches
+                matches = self._find_all_matches(content, old_string)
+                logger.info(f"Found {len(matches)} match(es) for old_string")
+                
+                if len(matches) == 0:
+                    logger.error("No matches found for old_string")
+                    
+                    # Try to provide helpful debugging info
+                    # Check if there are similar strings (fuzzy match)
+                    old_lines = old_string.split('\n')
+                    content_lines = content.split('\n')
+                    
+                    # Find lines that partially match
+                    similar_lines = []
+                    for i, old_line in enumerate(old_lines[:5]):  # Check first 5 lines
+                        if old_line.strip():
+                            for j, content_line in enumerate(content_lines):
+                                if old_line.strip() in content_line or content_line.strip() in old_line:
+                                    similar_lines.append((j + 1, content_line[:80]))
+                                    if len(similar_lines) >= 3:
+                                        break
+                    
+                    error_msg = f"未找到匹配的代码块"
+                    if similar_lines:
+                        error_msg += f"\n💡 提示: 在文件中找到相似的行:\n"
+                        for line_num, line_content in similar_lines:
+                            error_msg += f"  第 {line_num} 行: {line_content}...\n"
+                    error_msg += f"\n请检查:\n"
+                    error_msg += f"  1. old_string 是否包含足够的上下文（函数签名、注释等）\n"
+                    error_msg += f"  2. 空白字符和格式是否完全匹配\n"
+                    error_msg += f"  3. 文件内容是否已更改"
+                    
+                    return {
+                        "success": False,
+                        "error": error_msg,
+                        "file_path": str(resolved_path),
+                        "matches_found": 0,
+                        "similar_lines": similar_lines[:5] if similar_lines else None
+                    }
+                
+                # Safety check: if count=1 and multiple matches, fail
+                if count == 1 and len(matches) > 1:
+                    logger.error(f"Multiple matches found ({len(matches)}) but count=1")
+                    match_locations = [
+                        self._get_line_number(content, start) 
+                        for start, _ in matches
+                    ]
+                    
+                    return {
+                        "success": False,
+                        "error": f"找到 {len(matches)} 处匹配，但只允许替换 1 处。为确保安全，请提供更多上下文使 old_string 唯一匹配。",
+                        "file_path": str(resolved_path),
+                        "matches_found": len(matches),
+                        "match_locations": match_locations,
+                        "suggestion": "在 old_string 中包含更多上下文（如函数签名、类名、注释等）以确保唯一匹配"
+                    }
+                
+                # Perform replacements
+                replacements = 0
+                result_content = content
+                last_end = 0
+                
+                # Replace from end to start to preserve indices
+                for start, end in reversed(matches[:count]):
+                    if replacements >= count:
+                        break
+                    
+                    result_content = (
+                        result_content[:start] + 
+                        new_string + 
+                        result_content[end:]
+                    )
+                    replacements += 1
+                    line_num = self._get_line_number(content, start)
+                    logger.info(f"Replacement {replacements}: at position {start} (line {line_num})")
+                
+                # Write back to file
+                logger.info(f"Writing modified content to: {resolved_path}")
+                with open(resolved_path, 'w', encoding='utf-8') as f:
+                    f.write(result_content)
+                
+                logger.info(f"Search_replace completed successfully: {replacements} replacement(s)")
+                logger.info(f"Releasing lock for file: {resolved_path}")
+                logger.info("=" * 80)
                 
                 return {
-                    "success": False,
-                    "error": error_msg,
+                    "success": True,
                     "file_path": str(resolved_path),
-                    "matches_found": 0,
-                    "similar_lines": similar_lines[:5] if similar_lines else None
-                }
-            
-            # Safety check: if count=1 and multiple matches, fail
-            if count == 1 and len(matches) > 1:
-                logger.error(f"Multiple matches found ({len(matches)}) but count=1")
-                match_locations = [
-                    self._get_line_number(content, start) 
-                    for start, _ in matches
-                ]
-                
-                return {
-                    "success": False,
-                    "error": f"找到 {len(matches)} 处匹配，但只允许替换 1 处。为确保安全，请提供更多上下文使 old_string 唯一匹配。",
-                    "file_path": str(resolved_path),
+                    "replacements": replacements,
                     "matches_found": len(matches),
-                    "match_locations": match_locations,
-                    "suggestion": "在 old_string 中包含更多上下文（如函数签名、类名、注释等）以确保唯一匹配"
+                    "message": f"成功替换 {replacements} 处"
                 }
-            
-            # Perform replacements
-            replacements = 0
-            result_content = content
-            last_end = 0
-            
-            # Replace from end to start to preserve indices
-            for start, end in reversed(matches[:count]):
-                if replacements >= count:
-                    break
                 
-                result_content = (
-                    result_content[:start] + 
-                    new_string + 
-                    result_content[end:]
-                )
-                replacements += 1
-                line_num = self._get_line_number(content, start)
-                logger.info(f"Replacement {replacements}: at position {start} (line {line_num})")
-            
-            # Write back to file
-            logger.info(f"Writing modified content to: {resolved_path}")
-            with open(resolved_path, 'w', encoding='utf-8') as f:
-                f.write(result_content)
-            
-            logger.info(f"Search_replace completed successfully: {replacements} replacement(s)")
-            logger.info("=" * 80)
-            
-            return {
-                "success": True,
-                "file_path": str(resolved_path),
-                "replacements": replacements,
-                "matches_found": len(matches),
-                "message": f"成功替换 {replacements} 处"
-            }
-            
         except Exception as e:
             logger.error(f"Error in search_replace: {e}", exc_info=True)
             return {
