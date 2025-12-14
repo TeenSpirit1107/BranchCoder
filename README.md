@@ -116,6 +116,7 @@ OPENAI_BASE_URL=your_base_url  # 可选，用于自定义 API 端点
 OPENAI_PROXY=your_proxy_url  # 可选，代理配置
 
 # RAG 配置
+RAG_ENABLED=true  # 是否启用 RAG 索引构建和更新，默认: true。设置为 false 可禁用 RAG 功能
 RAG_UPDATE_INTERVAL_SECONDS=60  # RAG 更新服务的最小更新间隔（秒），默认: 60
 RAG_DESCRIPTION_CONCURRENCY=2  # 描述生成的并发数，默认: 2
 RAG_INDEXING_CONCURRENCY=2  # 索引构建的并发数，默认: 2

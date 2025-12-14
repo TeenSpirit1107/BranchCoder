@@ -27,8 +27,13 @@ from rag.hash import (
 # Load environment variables from .env file
 load_dotenv()
 
-# Get update interval from environment variable (in seconds）
-UPDATE_INTERVAL_SECONDS = int(os.getenv("RAG_UPDATE_INTERVAL_SECONDS"))
+# Check if RAG indexing is enabled via environment variable
+# Default to True if not set (backward compatible)
+RAG_ENABLED = os.getenv("RAG_ENABLED", "true").lower() in ("true", "1", "yes", "on")
+
+# Get update interval from environment variable (in seconds)
+# Default to 60 seconds if not set
+UPDATE_INTERVAL_SECONDS = int(os.getenv("RAG_UPDATE_INTERVAL_SECONDS", "60"))
 
 # Initialize logger
 logger = Logger('rag_update_service', log_to_file=False)
@@ -50,6 +55,14 @@ async def update_rag(
     Returns:
         Dictionary with status and message
     """
+    # Check if RAG indexing is enabled
+    if not RAG_ENABLED:
+        logger.info("RAG indexing is disabled via RAG_ENABLED environment variable, skipping update")
+        return {
+            "status": "success",
+            "message": "RAG indexing is disabled via RAG_ENABLED environment variable"
+        }
+    
     try:
         logger.info(f"Updating RAG service for workspace: {workspace_dir}")
         logger.info(f"Changed files: {len(changed_files)}, Deleted files: {len(deleted_files)}")

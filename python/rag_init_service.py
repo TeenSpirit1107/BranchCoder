@@ -8,12 +8,21 @@ Receives workspace directory path via stdin and initializes/updates RAG indexing
 
 import json
 import sys
+import os
 import asyncio
+from dotenv import load_dotenv
 
 from utils.logger import Logger
 from llm.chat_llm import AsyncChatClientWrapper
 from rag.rag_service import RagService
 from rag.hash import get_changed_files, check_indices_exist
+
+# Load environment variables from .env file
+load_dotenv()
+
+# Check if RAG indexing is enabled via environment variable
+# Default to True if not set (backward compatible)
+RAG_ENABLED = os.getenv("RAG_ENABLED", "true").lower() in ("true", "1", "yes", "on")
 
 # Initialize logger
 logger = Logger('rag_init_service', log_to_file=False)
@@ -33,6 +42,17 @@ async def initialize_rag(workspace_dir: str) -> dict:
     Returns:
         Dictionary with status, message, and operation details
     """
+    # Check if RAG indexing is enabled
+    if not RAG_ENABLED:
+        logger.info("RAG indexing is disabled via RAG_ENABLED environment variable, skipping initialization")
+        return {
+            "status": "success",
+            "message": "RAG indexing is disabled via RAG_ENABLED environment variable",
+            "operation": "skipped",
+            "has_changes": False,
+            "updated": False,
+        }
+    
     try:
         logger.info(f"Initializing RAG service for workspace: {workspace_dir}")
         
