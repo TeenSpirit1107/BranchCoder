@@ -143,7 +143,6 @@ RAG_INDEXING_CONCURRENCY=2  # 索引构建的并发数，默认: 2
 1. 在输入框中输入消息
 2. 按 `Enter` 或点击 "Send" 发送消息
 3. AI 将处理消息并返回响应（支持 Markdown 格式）
-4. 使用清除按钮（🧹）可以清空对话历史
 
 ### 代码修改工作流
 
@@ -238,7 +237,7 @@ RAG_INDEXING_CONCURRENCY=2  # 索引构建的并发数，默认: 2
 
 ### 修改 Flow Agent
 
-编辑 `python/agents/flow.py` 文件，可以：
+编辑 `python/agents/flow.py` (ReAct Flow)或者同目录`planact_flow.py` (PlanAct Flow) 下的文件，可以：
 - 调整最大迭代次数
 - 修改工具调用逻辑
 - 自定义提示词
@@ -306,6 +305,9 @@ npm run watch
 # 安装依赖（如果需要）
 uv sync
 
+# 安装依赖（dev版本，运行测试需要）
+uv sync --extra dev
+
 # 激活虚拟环境
 source .venv/bin/activate  # Linux/macOS
 # 或
@@ -313,6 +315,8 @@ source .venv/bin/activate  # Linux/macOS
 ```
 
 ### 运行测试
+
+运行测试需要安装dev版本的依赖（见上文）。
 
 ```bash
 # 运行 Python 工具测试
@@ -342,8 +346,9 @@ python tests/test_apply_patch_tool.py
 ├── python/                  # Python 服务
 │   ├── ai_service.py       # AI 服务主脚本
 │   ├── agents/              # Agent 系统
-│   │   ├── flow.py         # Flow Agent
-│   │   └── memory.py       # 记忆系统
+│   │   ├── flow.py         # ReAct Flow Agent
+│   │   ├── memory.py       # 记忆系统
+│   │   └── planact_flow.py # PlanAct Flow Agent
 │   ├── tools/               # 工具系统
 │   │   ├── base_tool.py    # 工具基类
 │   │   ├── tool_factory.py # 工具工厂
@@ -351,20 +356,43 @@ python tests/test_apply_patch_tool.py
 │   │   ├── command_tool.py
 │   │   ├── fetch_url_tool.py
 │   │   ├── lint_tool.py
+│   │   ├── message_tool.py
+│   │   ├── parallel_task_executor.py
+│   │   ├── search_replace_tool.py
+│   │   ├── send_report_tool.py
 │   │   ├── web_search_tool.py
 │   │   ├── workspace_rag_tool.py
-│   │   ├── workspace_structure_tool.py
-│   │   └── send_report_tool.py
+│   │   └── workspace_structure_tool.py
 │   ├── llm/                 # LLM 客户端
+│   │   ├── chat_llm.py
+│   │   └── rag_llm.py
 │   ├── rag/                 # RAG 索引服务
+│   │   ├── class_slicer.py
+│   │   ├── description_generator.py
+│   │   ├── function_slicer.py
+│   │   ├── hash.py
+│   │   ├── incremental_updater.py
+│   │   ├── indexing.py
+│   │   └── rag_service.py
+│   ├── rag_init_service.py  # RAG 初始化服务
+│   ├── rag_update_service.py # RAG 更新服务
 │   ├── models/              # 数据模型
 │   ├── prompts/             # 提示词
+│   │   └── flow_prompt.py
 │   ├── utils/               # 工具函数
+│   │   ├── logger.py
+│   │   └── patch_parser.py
 │   └── tests/               # 测试
 ├── media/                   # 静态资源（CSS 等）
 │   └── chat.css            # 聊天界面样式
 ├── out/                     # TypeScript 编译输出
-└── package.json            # Node.js 配置
+├── doc/                     # 文档
+├── logs/                    # 日志文件
+├── sample_ws/               # 示例工作区
+├── package.json            # Node.js 配置
+├── pyproject.toml          # Python 项目配置
+├── tsconfig.json           # TypeScript 配置
+└── uv.lock                 # uv 锁定文件
 ```
 
 ## 许可证
