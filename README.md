@@ -130,6 +130,12 @@ RAG_INDEXING_CONCURRENCY=2  # Concurrency for index building, default: 2
 
 ## Usage
 
+### Run the Agent with "Run and Debug"
+
+Run the code with `Run and Debug` mode:
+
+![run and debug](doc/readme/run_and_debug.png)
+
 ### Access Chat Interface
 
 1. **Via Activity Bar Icon** (Recommended):

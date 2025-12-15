@@ -130,6 +130,12 @@ RAG_INDEXING_CONCURRENCY=2  # 索引构建的并发数，默认: 2
 
 ## 使用方法
 
+### 使用 "Run and Debug" 运行 Agent
+
+使用 `Run and Debug` 模式运行代码：
+
+![run and debug](doc/readme/run_and_debug.png)
+
 ### 访问聊天界面
 
 1. **通过活动栏图标**（推荐）：
