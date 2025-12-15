@@ -134,9 +134,9 @@ RAG_INDEXING_CONCURRENCY=2  # 索引构建的并发数，默认: 2
 
 1. **通过活动栏图标**（推荐）：
    - 在 VS Code 左侧活动栏找到 💬 聊天图标
-   - 点击图标打开 "AI Chat" 视图
+   - 点击图标打开 "AI Chat" 视图（见下图）
 
-
+    ![AI Chat](doc/readme/ai_chat.png)
 
 2. **通过命令面板**：
    - 按 `Ctrl+Shift+P` (Windows/Linux) 或 `Cmd+Shift+P` (Mac)
@@ -333,9 +333,11 @@ python tests/test_apply_patch_tool.py
 
 ### 调试
 
-1. 在 VS Code 中按 `F5` 启动扩展开发主机
+1. 在 VS Code 或者Cursor等VS Code架构的代码编辑器中，按`Run and Debug`键启动扩展开发主机（见下图）
 2. 在开发主机中测试扩展功能
 3. 查看调试控制台和输出面板（"AI Service" 频道）获取日志
+
+![run and debug](doc/readme/run_and_debug.png)
 
 ### 项目结构
 

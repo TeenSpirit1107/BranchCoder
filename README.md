@@ -134,9 +134,9 @@ RAG_INDEXING_CONCURRENCY=2  # Concurrency for index building, default: 2
 
 1. **Via Activity Bar Icon** (Recommended):
    - Find the 💬 chat icon in the VS Code left activity bar
-   - Click the icon to open the "AI Chat" view
+   - Click the icon to open the "AI Chat" view (see image below)
 
-
+   ![AI Chat](doc/readme/ai_chat.png)
 
 2. **Via Command Palette**:
    - Press `Ctrl+Shift+P` (Windows/Linux) or `Cmd+Shift+P` (Mac)
@@ -333,9 +333,11 @@ python tests/test_apply_patch_tool.py
 
 ### Debugging
 
-1. Press `F5` in VS Code to start Extension Development Host
+1. In VS Code or code editors based on VS Code architecture (such as Cursor), press the `Run and Debug` button to start Extension Development Host (see image below)
 2. Test extension functionality in the development host
 3. View debug console and output panel ("AI Service" channel) for logs
+
+![run and debug](doc/readme/run_and_debug.png)
 
 ### Project Structure
 
