@@ -174,6 +174,14 @@ When AI generates code patches:
 - **Closed Detection**: Even if files change when VS Code is closed, it will automatically detect and update when reopened
 - **View Logs**: In VS Code's "Output" panel, select "AI Service" channel to view detailed logs
 
+### Example Task: `sample_ws`
+
+Example prompt: `Processing message: Please complete all the TODOs in the project.`
+
+The code under `sample_ws` has some incomplete parts, marked with TODO in comments, along with implementation ideas.
+
+The code in `sample_ws` can create a weighted directed graph, select different destination points on the graph based on user choices, use different shortest path algorithms, view paths and lengths, and display them in ASCII format in the command line.
+
 ## How It Works
 
 ### AI Service Architecture

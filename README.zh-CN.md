@@ -174,6 +174,14 @@ RAG_INDEXING_CONCURRENCY=2  # 索引构建的并发数，默认: 2
 - **关闭检测**：即使 VS Code 关闭时文件发生变化，重新打开时也会自动检测并更新
 - **查看日志**：在 VS Code 的"输出"面板中，选择 "AI Service" 频道查看详细日志
 
+### 示例任务:`sample_ws`
+
+示例prompt: `Processing message: Please complete all the TODOs in the project.`
+
+`sample_ws`下的代码中均有部分未完成，在注释中用TODO标明，并写出了完成思路。
+
+`sample_ws`中的代码，可以创造一个加权有向图，根据用户的选择在图上选择不同的目的点，使用不同的最短路径算法，查看路径与长度，并在命令行中用ASCII展示出来。
+
 ## 工作原理
 
 ### AI 服务架构
