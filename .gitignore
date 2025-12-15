@@ -71,8 +71,7 @@ coverage.xml
 logs/
 
 # Documents
-
-doc/main.tex
+doc/report/*
 
 # Local development settings
 .env.local
@@ -82,7 +81,6 @@ doc/main.tex
 
 clear_logs.sh
 mv_log.sh
-sample_ws
 
 # Node.js
 node_modules/

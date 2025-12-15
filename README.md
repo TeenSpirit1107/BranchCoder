@@ -132,6 +132,8 @@ RAG_INDEXING_CONCURRENCY=2  # 索引构建的并发数，默认: 2
    - 在 VS Code 左侧活动栏找到 💬 聊天图标
    - 点击图标打开 "AI Chat" 视图
 
+
+
 2. **通过命令面板**：
    - 按 `Ctrl+Shift+P` (Windows/Linux) 或 `Cmd+Shift+P` (Mac)
    - 输入 `AI Chat: Open AI Chat` 并选择
