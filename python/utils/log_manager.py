@@ -79,7 +79,8 @@ def archive_logs_by_date_range(
     end_date: str,
     end_time: str,
     logs_dir: Optional[str] = None,
-    remove_records: bool = False
+    remove_records: bool = False,
+    comment: Optional[str] = None
 ) -> str:
     """
     Archive logs from logs/logs directory based on date and time range.
@@ -91,6 +92,7 @@ def archive_logs_by_date_range(
         end_time: End time in format HH:MM:SS
         logs_dir: Base logs directory (default: logs/logs relative to project root)
         remove_records: If True, remove archived records from original log files
+        comment: Optional comment to append to archive directory name
     
     Returns:
         Path to the archive directory
@@ -120,10 +122,20 @@ def archive_logs_by_date_range(
         raise ValueError(f"Logs directory does not exist: {logs_dir}")
     
     # Create archive directory name
-    # Format: from_YYYYMMDD_HHMMSS_to_YYYYMMDD_HHMMSS
+    # Format: from_YYYYMMDD_HHMMSS_to_YYYYMMDD_HHMMSS[_comment]
     start_str = start_dt.strftime("%Y%m%d_%H%M%S")
     end_str = end_dt.strftime("%Y%m%d_%H%M%S")
     archive_dir_name = f"from_{start_str}_to_{end_str}"
+    
+    # Add comment if provided (sanitize for filesystem safety)
+    if comment:
+        # Replace unsafe characters with underscores
+        safe_comment = re.sub(r'[<>:"/\\|?*]', '_', comment.strip())
+        # Replace spaces with underscores and remove leading/trailing underscores
+        safe_comment = re.sub(r'\s+', '_', safe_comment).strip('_')
+        if safe_comment:
+            archive_dir_name = f"{archive_dir_name}_{safe_comment}"
+    
     archive_dir = logs_dir / "archived" / archive_dir_name
     archive_dir.mkdir(parents=True, exist_ok=True)
     
@@ -687,16 +699,21 @@ def main():
         print()
         print(f"Time range: {start_dt} to {end_dt}")
         
+        # Prompt for optional comment
+        print()
+        comment_input = input("Enter optional comment for archive directory name (press Enter to skip): ").strip()
+        comment = comment_input if comment_input else None
+        
         # Execute selected operation
         if mode == 1:
             print("Starting archive and removal...")
             print()
-            archive_dir = archive_logs_by_date_range(start_date, start_time, end_date, end_time, remove_records=True)
+            archive_dir = archive_logs_by_date_range(start_date, start_time, end_date, end_time, remove_records=True, comment=comment)
             print(f"\nSuccess! Logs archived and removed. Archive location: {archive_dir}")
         elif mode == 2:
             print("Starting archive (without removal)...")
             print()
-            archive_dir = archive_logs_by_date_range(start_date, start_time, end_date, end_time, remove_records=False)
+            archive_dir = archive_logs_by_date_range(start_date, start_time, end_date, end_time, remove_records=False, comment=comment)
             print(f"\nSuccess! Logs archived. Archive location: {archive_dir}")
         elif mode == 3:
             print("Starting removal only...")
