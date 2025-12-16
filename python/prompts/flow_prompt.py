@@ -136,6 +136,7 @@ Available Tools:
 - To modify code files, use the search_replace tool. This tool matches code by content, not line numbers, making it more reliable.
 - When using search_replace:
   - ⚠️ DEFAULT: Do NOT read files before search_replace. Use matching strings based on your understanding from conversation context or initial file reads.
+  - ⚠️ CRITICAL: After EACH successful search_replace, you MUST re-read the file using `cat <file_path>` before attempting any further modifications to the same file. The file content has changed, so your old_string must match the NEW file state.
   - ⚠️ ONLY IF search_replace FAILS: Then read the file using `cat <file>` to see the current state, and retry with updated matching strings
   - Provide enough context in old_string to ensure unique matching (include function signatures, class names, comments, surrounding code)
   - Use exact whitespace and formatting as it appears in the file
@@ -144,7 +145,7 @@ Available Tools:
 - For multiple file changes, call search_replace multiple times (once per file).
 - After each search_replace, you MUST run lint_code to verify the changes before calling send_report
 - If search_replace fails, immediately read the file using `cat <file>` to see the current state, then retry with updated matching strings
-- Prioritize efficiency: Try search_replace first → If fails, read file → Retry with updated strings → Lint → Report
+- Prioritize efficiency: Try search_replace first → Re-read file → Next modification → If fails, read file → Retry with updated strings → Lint → Report
 
 🚫 RESTRICTIONS:
 - You CANNOT create sub-agents (no execute_parallel_tasks)
@@ -156,12 +157,15 @@ Workflow:
 2. Understand what specifically YOU need to do
 3. For each file modification:
    a. Try search_replace directly using matching strings from your understanding (conversation context, initial reads, or file structure)
-   b. If search_replace succeeds, run lint_code to verify the changes
+   b. If search_replace succeeds:
+      - ⚠️ CRITICAL: Immediately re-read the file using `cat <file_path>` to get the updated file content
+      - The file has changed, so you need the new content for any subsequent modifications
+      - Then run lint_code to verify the changes
    c. If search_replace fails, THEN read the file using `cat <file>` to see current state, update matching strings, and retry
    d. If lint fails, fix the issues and retry
 4. Call send_report with your results (only after all changes are linted successfully)
 
-EFFICIENCY TIP: Avoid reading files unless search_replace fails. Use your understanding from conversation context and initial file reads to construct matching strings.
+⚠️ CRITICAL RULE: After EVERY successful search_replace on a file, you MUST re-read that file before making any further modifications. The system will remind you, but you must follow this rule strictly to avoid "Start line content not found" errors.
 
 Current Information:
 - Current Time: {current_time}

@@ -210,6 +210,23 @@ class ReActFlow(BaseFlow):
                         if self.consecutive_search_replace_failures > 0:
                             logger.info(f"Search_replace tool succeeded. Resetting failure counter from {self.consecutive_search_replace_failures} to 0.")
                         self.consecutive_search_replace_failures = 0
+                        
+                        # Force agent to re-read file after successful search_replace
+                        # This ensures agent uses updated file content for subsequent modifications
+                        file_path = tool_args.get("file_path", "")
+                        if file_path:
+                            re_read_prompt = (
+                                f"⚠️ IMPORTANT: search_replace succeeded on {file_path}. "
+                                f"The file content has changed. You MUST re-read the file using `cat {file_path}` "
+                                f"before attempting any further modifications to this file. "
+                                f"This ensures your old_string matches the current file state."
+                            )
+                            logger.info(f"Adding file re-read prompt for {file_path}")
+                            self.memory.messages.append({
+                                "role": "user",
+                                "content": re_read_prompt
+                            })
+                            yield MessageEvent(message=re_read_prompt)
             else:
                 # LLM returned text response without tool calls
                 answer_text = result.get("answer", "") or ""
