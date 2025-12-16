@@ -26,6 +26,8 @@ class ReActFlow(BaseFlow):
         set_workspace_dir(workspace_dir)
         self.memory = Memory(workspace_dir, is_parent=is_parent)
         self.consecutive_search_replace_failures = 0
+        # Track recent search_replace results for child agents (last 2 attempts)
+        self.recent_search_replace_results: List[bool] = []
         logger.info(f"Flow agent initialized with {len(self.tools_definitions)} tools, is_parent={is_parent}")
     
     def _validate_search_replace_linter_sequence(self) -> bool:
@@ -106,6 +108,7 @@ class ReActFlow(BaseFlow):
         
         # Reset search_replace failure counter for new user message
         self.consecutive_search_replace_failures = 0
+        self.recent_search_replace_results = []
         iteration = 0
         while iteration < self.MAX_ITERATION:
             iteration += 1
@@ -199,9 +202,41 @@ class ReActFlow(BaseFlow):
                           tool_result.get("status") == "failed"))
                     )
                     
+                    # Track recent results (keep last 2 for child agents)
+                    self.recent_search_replace_results.append(not is_search_replace_failed)  # True for success, False for failure
+                    if len(self.recent_search_replace_results) > 2:
+                        self.recent_search_replace_results.pop(0)
+                    
                     if is_search_replace_failed:
                         self.consecutive_search_replace_failures += 1
                         logger.warning(f"Search_replace tool failed. Consecutive failures: {self.consecutive_search_replace_failures}/{self.MAX_SEARCH_REPLACE_FAILURES}")
+                        
+                        # For child agents: trigger reflection if last 2 attempts both failed
+                        if not self.is_parent and len(self.recent_search_replace_results) >= 2:
+                            last_two_failed = not self.recent_search_replace_results[-1] and not self.recent_search_replace_results[-2]
+                            if last_two_failed:
+                                logger.warning(f"Child agent: Last 2 search_replace attempts failed. Triggering reflection to fix approach.")
+                                reflection_message = SEARCH_REPLACE_FAILURE_REFLECTION_PROMPT.format(
+                                    failure_count=2,
+                                    workspace_dir=self.workspace_dir
+                                )
+                                # Add a more specific prompt for child agents
+                                child_reflection_prompt = (
+                                    f"⚠️ CRITICAL: Your last 2 search_replace attempts on this file have failed. "
+                                    f"You need to stop and think about why they failed before trying again.\n\n"
+                                    f"{reflection_message}\n\n"
+                                    f"Please analyze the error messages from the failed attempts, re-read the file to see its current state, "
+                                    f"and develop a better strategy before attempting another search_replace."
+                                )
+                                self.memory.messages.append({
+                                    "role": "user",
+                                    "content": child_reflection_prompt
+                                })
+                                event = MessageEvent(message="🤔 Reflecting on search_replace failures... Analyzing the issue to develop a better approach.")
+                                event.is_parent = self.is_parent
+                                yield event
+                                # Continue to next iteration to let LLM think and respond
+                                continue
                         
                         if self.consecutive_search_replace_failures >= self.MAX_SEARCH_REPLACE_FAILURES:
                             logger.error(f"Reached max consecutive search_replace failures ({self.MAX_SEARCH_REPLACE_FAILURES}). Triggering reflection.")
