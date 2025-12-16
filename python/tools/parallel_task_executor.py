@@ -96,10 +96,10 @@ class ParallelTaskExecutorTool(MCPTool):
             final_message = ""
 
             try:
-                from agents.flow import FlowAgent
+                from agents.react_flow import ReActFlow
 
                 # Create child agent with is_parent=False to prevent further nesting
-                agent = FlowAgent(self.workspace_dir or "", is_parent=False)
+                agent = ReActFlow(self.workspace_dir or "", is_parent=False)
                 async for event in agent.process(
                     task_description,
                     sub_session_id,
@@ -227,10 +227,10 @@ class ParallelTaskExecutorTool(MCPTool):
             final_message = ""
 
             try:
-                from agents.flow import FlowAgent
+                from agents.react_flow import ReActFlow
 
                 # Create child agent with is_parent=False to prevent further nesting
-                agent = FlowAgent(self.workspace_dir or "", is_parent=False)
+                agent = ReActFlow(self.workspace_dir or "", is_parent=False)
                 async for event in agent.process(
                     task_description,
                     sub_session_id,
