@@ -135,6 +135,83 @@ class PlanActFlow(BaseFlow):
         
         logger.warning("Failed to revise plan")
     
+    def _get_last_search_replace_file_path(self) -> Optional[str]:
+        """
+        Get the file path from the last search_replace tool call.
+        
+        Returns:
+            File path if found, None otherwise
+        """
+        messages = self.memory.get_messages()
+        
+        # Find the last search_replace tool call
+        for i in range(len(messages) - 1, -1, -1):
+            msg = messages[i]
+            if msg.get("role") == "assistant" and msg.get("tool_calls"):
+                tool_calls = msg.get("tool_calls", [])
+                for tool_call in tool_calls:
+                    function_name = tool_call.get("function", {}).get("name", "")
+                    if function_name == self.SEARCH_REPLACE_TOOL_NAME:
+                        args = tool_call.get("function", {}).get("arguments", "{}")
+                        import json
+                        try:
+                            args_dict = json.loads(args) if isinstance(args, str) else args
+                            file_path = args_dict.get("file_path")
+                            if file_path:
+                                return file_path
+                        except:
+                            pass
+        return None
+    
+    async def _auto_run_linter(self, file_path: str, session_id: str, iteration: int):
+        """
+        Automatically run linter on a file after search_replace.
+        
+        Args:
+            file_path: Path to the file to lint
+            session_id: Current session ID
+            iteration: Current iteration number
+            
+        Yields:
+            Events from tool execution
+        """
+        logger.info(f"Auto-running linter on {file_path} after search_replace")
+        yield MessageEvent(message=f"🔍 Auto-running linter on {file_path}...")
+        
+        tool_args = {"file_path": file_path}
+        tool_result = None
+        
+        # Execute linter tool
+        async for event in execute_tool(ToolCallEvent(
+            message=f"Auto-calling lint_code on {file_path}",
+            tool_name=self.LINTER_TOOL_NAME,
+            tool_args=tool_args,
+        )):
+            if isinstance(event, MessageEvent):
+                yield event
+            elif isinstance(event, ToolCallEvent):
+                yield event
+            elif isinstance(event, ToolResultEvent):
+                yield event
+                tool_result = event.result
+        
+        # Add to memory after tool execution completes
+        if tool_result is None:
+            tool_result = {"error": "Tool execution returned no result"}
+        
+        self.memory.add_tool_call(session_id, iteration, self.LINTER_TOOL_NAME, tool_args)
+        self.memory.add_tool_result(session_id, iteration, tool_result)
+        
+        # Check result
+        if tool_result and isinstance(tool_result, dict):
+            if tool_result.get("success") is True and tool_result.get("error_count", 0) == 0:
+                logger.info(f"Auto-linter passed: {file_path} has no errors")
+                yield MessageEvent(message=f"✅ Linter check passed: {file_path} has no syntax errors")
+            else:
+                error_count = tool_result.get("error_count", 0)
+                logger.warning(f"Auto-linter found {error_count} error(s) in {file_path}")
+                yield MessageEvent(message=f"⚠️ Linter found {error_count} error(s) in {file_path}. Please fix them before reporting.")
+    
     def _validate_search_replace_linter_sequence(self) -> bool:
         """
         Validate that if search_replace tool was used, linter tool was run successfully after the last search_replace.
@@ -385,14 +462,38 @@ class PlanActFlow(BaseFlow):
                 if is_report:
                     # Before returning, validate that if search_replace was used, linter was run after
                     if not self._validate_search_replace_linter_sequence():
-                        error_msg = "⚠️ Search_replace tool was used but linter was not run successfully after the last search_replace. Please run the linter tool to verify the code changes."
-                        logger.warning(f"Report blocked: {error_msg}")
-                        yield MessageEvent(message=error_msg)
-                        self.memory.messages.append({
-                            "role": "user",
-                            "content": error_msg
-                        })
-                        continue
+                        # Try to auto-run linter on the last modified file
+                        last_file_path = self._get_last_search_replace_file_path()
+                        if last_file_path:
+                            logger.info(f"Report blocked: auto-running linter on {last_file_path}")
+                            yield MessageEvent(message="⚠️ Search_replace tool was used but linter was not run. Auto-running linter now...")
+                            
+                            # Auto-run linter
+                            async for event in self._auto_run_linter(last_file_path, session_id, iteration):
+                                yield event
+                            
+                            # Re-validate after auto-running linter
+                            if not self._validate_search_replace_linter_sequence():
+                                error_msg = "⚠️ Linter check failed or found errors. Please fix the errors before reporting."
+                                logger.warning(f"Report still blocked after auto-linter: {error_msg}")
+                                yield MessageEvent(message=error_msg)
+                                self.memory.messages.append({
+                                    "role": "user",
+                                    "content": error_msg
+                                })
+                                continue
+                            else:
+                                logger.info("Linter validation passed after auto-run, allowing report")
+                                # Continue to return and allow the report
+                        else:
+                            error_msg = "⚠️ Search_replace tool was used but linter was not run successfully after the last search_replace. Please run the linter tool to verify the code changes."
+                            logger.warning(f"Report blocked: {error_msg}")
+                            yield MessageEvent(message=error_msg)
+                            self.memory.messages.append({
+                                "role": "user",
+                                "content": error_msg
+                            })
+                            continue
                     return
                     
             else:
