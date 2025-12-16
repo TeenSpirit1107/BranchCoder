@@ -735,7 +735,36 @@ export class ChatPanel {
                         let contentHtml = '';
                         if (evt.type === 'tool_call' || evt.type === 'tool_result') {
                             const toolName = evt.tool_name || 'unknown';
-                            const toolLabel = evt.type === 'tool_call' ? '🔧 Calling Tool' : '✅ Tool Completed';
+                            let toolLabel;
+                            if (evt.type === 'tool_call') {
+                                toolLabel = '🔧 Calling Tool';
+                            } else {
+                                // For tool_result, check if execution was successful
+                                const result = evt.result || {};
+                                const returncode = result.returncode;
+                                const success = result.success;
+                                
+                                // Determine if tool execution was successful:
+                                // - If returncode exists, it must be 0 for success
+                                // - If returncode doesn't exist, check success field
+                                // - If error field exists, it's a failure
+                                let isSuccessful = false;
+                                if (result.error !== undefined) {
+                                    // Has error field, definitely failed
+                                    isSuccessful = false;
+                                } else if (returncode !== undefined) {
+                                    // Has returncode, check if it's 0
+                                    isSuccessful = returncode === 0;
+                                } else if (success !== undefined) {
+                                    // No returncode, check success field
+                                    isSuccessful = success === true;
+                                } else {
+                                    // No success indicators, assume successful (backward compatibility)
+                                    isSuccessful = true;
+                                }
+                                
+                                toolLabel = isSuccessful ? '✅ Tool Completed' : '⚠️ Tool Completed';
+                            }
                             contentHtml = '<div class="tool-header"><strong>' + toolLabel + ':</strong> <code>' + toolName + '</code></div>';
                             if (evt.message) {
                                 contentHtml += '<div class="tool-message">' + renderMarkdown(evt.message) + '</div>';
