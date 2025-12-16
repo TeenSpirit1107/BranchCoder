@@ -133,6 +133,7 @@ class ReActFlow(BaseFlow):
                     context_messages = copy.deepcopy(self.memory.get_messages())
                     tool_args.setdefault("context_messages", context_messages)
                     tool_args.setdefault("parent_session_id", session_id)
+                    tool_args.setdefault("parent_flow_type", "react")
 
                 logger.info(f"Tool call: {tool_name} with args: {tool_args}")
 

@@ -74,7 +74,8 @@ class ParallelTaskExecutorTool(MCPTool):
         self,
         tasks: List[str],
         parent_session_id: Optional[str] = None,
-        context_messages: Optional[List[Dict[str, Any]]] = None
+        context_messages: Optional[List[Dict[str, Any]]] = None,
+        parent_flow_type: Optional[str] = None
     ) -> AsyncGenerator[BaseEvent, None]:
         """
         Execute tasks in parallel and yield all events from subtasks.
@@ -96,10 +97,14 @@ class ParallelTaskExecutorTool(MCPTool):
             final_message = ""
 
             try:
-                from agents.react_flow import ReActFlow
-
-                # Create child agent with is_parent=False to prevent further nesting
-                agent = ReActFlow(self.workspace_dir or "", is_parent=False)
+                # Determine child flow type based on parent flow type
+                if parent_flow_type == "planact" or parent_flow_type == "PlanActFlow":
+                    from agents.planact_flow import PlanActFlow
+                    agent = PlanActFlow(self.workspace_dir or "", is_parent=False)
+                else:
+                    # Default to ReActFlow (for "react", "ReActFlow", or None)
+                    from agents.react_flow import ReActFlow
+                    agent = ReActFlow(self.workspace_dir or "", is_parent=False)
                 async for event in agent.process(
                     task_description,
                     sub_session_id,
@@ -210,7 +215,8 @@ class ParallelTaskExecutorTool(MCPTool):
         self,
         tasks: List[str],
         parent_session_id: Optional[str] = None,
-        context_messages: Optional[List[Dict[str, Any]]] = None
+        context_messages: Optional[List[Dict[str, Any]]] = None,
+        parent_flow_type: Optional[str] = None
     ) -> Dict[str, Any]:
         if not tasks:
             return {
@@ -227,10 +233,14 @@ class ParallelTaskExecutorTool(MCPTool):
             final_message = ""
 
             try:
-                from agents.react_flow import ReActFlow
-
-                # Create child agent with is_parent=False to prevent further nesting
-                agent = ReActFlow(self.workspace_dir or "", is_parent=False)
+                # Determine child flow type based on parent flow type
+                if parent_flow_type == "planact" or parent_flow_type == "PlanActFlow":
+                    from agents.planact_flow import PlanActFlow
+                    agent = PlanActFlow(self.workspace_dir or "", is_parent=False)
+                else:
+                    # Default to ReActFlow (for "react", "ReActFlow", or None)
+                    from agents.react_flow import ReActFlow
+                    agent = ReActFlow(self.workspace_dir or "", is_parent=False)
                 async for event in agent.process(
                     task_description,
                     sub_session_id,
