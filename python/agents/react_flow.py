@@ -110,7 +110,9 @@ class ReActFlow(BaseFlow):
         while iteration < self.MAX_ITERATION:
             iteration += 1
             logger.debug(f"Flow iteration {iteration}")
-            yield MessageEvent(message=f"Thinking... (Iteration: {iteration})")
+            event = MessageEvent(message=f"Thinking... (Iteration: {iteration})")
+            event.is_parent = self.is_parent
+            yield event
             result = await self.llm_client.ask(
                 messages=self.memory.get_messages(),
                 tools=self.tools_definitions,
@@ -124,7 +126,9 @@ class ReActFlow(BaseFlow):
                     if not self.is_parent:
                         error_msg = "⚠️ This agent is not allowed to create sub-agents. Only parent agents can use execute_parallel_tasks."
                         logger.warning(f"Blocked parallel task execution: agent is not a parent (session: {session_id})")
-                        yield MessageEvent(message=error_msg)
+                        event = MessageEvent(message=error_msg)
+                        event.is_parent = self.is_parent
+                        yield event
                         self.memory.add_tool_call(session_id, iteration, tool_name, tool_args)
                         self.memory.add_tool_result(session_id, iteration, {"success": False, "error": error_msg})
                         continue
@@ -145,6 +149,12 @@ class ReActFlow(BaseFlow):
                     tool_name=tool_name,
                     tool_args=tool_args,
                 )):
+                    # Set agent information for parent agent if not already set
+                    if event.is_parent is None:
+                        event.is_parent = self.is_parent
+                    if event.is_parent and event.agent_index is None:
+                        event.agent_index = None  # Parent agent has no index
+                    
                     if isinstance(event, MessageEvent):
                         yield event
                     elif isinstance(event, ToolCallEvent):
@@ -169,7 +179,9 @@ class ReActFlow(BaseFlow):
                     if not self._validate_search_replace_linter_sequence():
                         error_msg = "⚠️ Search_replace tool was used but linter was not run successfully after the last search_replace. Please run the linter tool to verify the code changes."
                         logger.warning(f"Report blocked: {error_msg}")
-                        yield MessageEvent(message=error_msg)
+                        event = MessageEvent(message=error_msg)
+                        event.is_parent = self.is_parent
+                        yield event
                         self.memory.messages.append({
                             "role": "user",
                             "content": error_msg
@@ -202,7 +214,9 @@ class ReActFlow(BaseFlow):
                                 "content": reflection_message
                             })
                             self.consecutive_search_replace_failures = 0
-                            yield MessageEvent(message=reflection_message)
+                            event = MessageEvent(message=reflection_message)
+                            event.is_parent = self.is_parent
+                            yield event
                             # Continue iteration after reflection
                             continue
                     else:
@@ -226,7 +240,9 @@ class ReActFlow(BaseFlow):
                                 "role": "user",
                                 "content": re_read_prompt
                             })
-                            yield MessageEvent(message=re_read_prompt)
+                            event = MessageEvent(message=re_read_prompt)
+                            event.is_parent = self.is_parent
+                            yield event
             else:
                 # LLM returned text response without tool calls
                 answer_text = result.get("answer", "") or ""
@@ -235,12 +251,16 @@ class ReActFlow(BaseFlow):
                     # But handle gracefully if it doesn't
                     logger.warning(f"LLM returned text response without calling send_message tool: {answer_text[:100]}")
                     self.memory.add_assistant_message(session_id, answer_text)
-                    yield MessageEvent(message=answer_text)
+                    event = MessageEvent(message=answer_text)
+                    event.is_parent = self.is_parent
+                    yield event
                 return
 
         logger.warning(f"Reached max iterations ({self.MAX_ITERATION}), returning error message")
         error_message = "Sorry. Hit max iterations limit"
-        yield ReportEvent(message=error_message)
+        event = ReportEvent(message=error_message)
+        event.is_parent = self.is_parent
+        yield event
 
 
 # Backward compatibility alias

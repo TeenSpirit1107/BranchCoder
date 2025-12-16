@@ -721,6 +721,15 @@ export class ChatPanel {
                             className += ' error';
                         }
 
+                        // Add agent color class based on is_parent and agent_index
+                        if (evt.is_parent === true) {
+                            className += ' agent-parent';
+                        } else if (evt.is_parent === false && evt.agent_index !== null && evt.agent_index !== undefined) {
+                            // Child agent: use agent_index % 8 to cycle through 8 colors
+                            const colorIndex = evt.agent_index % 8;
+                            className += ' agent-child-' + colorIndex;
+                        }
+
                         msgDiv.className = className;
 
                         let contentHtml = '';

@@ -59,7 +59,9 @@ class PlanActFlow(BaseFlow):
             "content": PLANNING_PROMPT
         })
         
-        yield MessageEvent(message="📋 Creating execution plan...")
+        event = MessageEvent(message="📋 Creating execution plan...")
+        event.is_parent = True  # Planning is always done by parent agent
+        yield event
         
         # Ask LLM to generate plan (without tools, just text response)
         result = await self.llm_client.ask(
@@ -78,7 +80,9 @@ class PlanActFlow(BaseFlow):
                     "role": "assistant",
                     "content": plan
                 })
-                yield MessageEvent(message=f"📋 Plan created:\n{plan}")
+                event = MessageEvent(message=f"📋 Plan created:\n{plan}")
+                event.is_parent = True
+                yield event
                 return  # Plan stored in self.current_plan
         
         logger.warning("Failed to generate a valid plan, proceeding without explicit plan")
@@ -113,7 +117,9 @@ class PlanActFlow(BaseFlow):
             "content": revision_prompt
         })
         
-        yield MessageEvent(message=f"🔄 Revising plan (attempt {self.plan_revision_count})...")
+        event = MessageEvent(message=f"🔄 Revising plan (attempt {self.plan_revision_count})...")
+        event.is_parent = True
+        yield event
         
         result = await self.llm_client.ask(
             messages=self.memory.get_messages(),
@@ -130,7 +136,9 @@ class PlanActFlow(BaseFlow):
                     "role": "assistant",
                     "content": revised_plan
                 })
-                yield MessageEvent(message=f"🔄 Plan revised:\n{revised_plan}")
+                event = MessageEvent(message=f"🔄 Plan revised:\n{revised_plan}")
+                event.is_parent = True
+                yield event
                 return  # Plan stored in self.current_plan
         
         logger.warning("Failed to revise plan")
@@ -176,7 +184,9 @@ class PlanActFlow(BaseFlow):
             Events from tool execution
         """
         logger.info(f"Auto-running linter on {file_path} after search_replace")
-        yield MessageEvent(message=f"🔍 Auto-running linter on {file_path}...")
+        event = MessageEvent(message=f"🔍 Auto-running linter on {file_path}...")
+        event.is_parent = self.is_parent
+        yield event
         
         tool_args = {"file_path": file_path}
         tool_result = None
@@ -206,11 +216,15 @@ class PlanActFlow(BaseFlow):
         if tool_result and isinstance(tool_result, dict):
             if tool_result.get("success") is True and tool_result.get("error_count", 0) == 0:
                 logger.info(f"Auto-linter passed: {file_path} has no errors")
-                yield MessageEvent(message=f"✅ Linter check passed: {file_path} has no syntax errors")
+                event = MessageEvent(message=f"✅ Linter check passed: {file_path} has no syntax errors")
+                event.is_parent = self.is_parent
+                yield event
             else:
                 error_count = tool_result.get("error_count", 0)
                 logger.warning(f"Auto-linter found {error_count} error(s) in {file_path}")
-                yield MessageEvent(message=f"⚠️ Linter found {error_count} error(s) in {file_path}. Please fix them before reporting.")
+                event = MessageEvent(message=f"⚠️ Linter found {error_count} error(s) in {file_path}. Please fix them before reporting.")
+                event.is_parent = self.is_parent
+                yield event
     
     def _validate_search_replace_linter_sequence(self) -> bool:
         """
@@ -302,7 +316,9 @@ class PlanActFlow(BaseFlow):
         if not self.current_plan:
             # If planning failed, fall back to reactive execution
             logger.warning("No plan generated, falling back to reactive mode")
-            yield MessageEvent(message="⚠️ Could not generate plan, proceeding with reactive execution...")
+            event = MessageEvent(message="⚠️ Could not generate plan, proceeding with reactive execution...")
+            event.is_parent = True
+            yield event
         
         # Phase 2: Acting
         iteration = 0
@@ -312,7 +328,9 @@ class PlanActFlow(BaseFlow):
         while iteration < self.MAX_ITERATION:
             iteration += 1
             logger.debug(f"PlanAct iteration {iteration}")
-            yield MessageEvent(message=f"⚙️ Executing... (Step: {iteration})")
+            event = MessageEvent(message=f"⚙️ Executing... (Step: {iteration})")
+            event.is_parent = self.is_parent
+            yield event
             
             # Add context about the plan to help LLM stay on track
             execution_context = ""
@@ -344,7 +362,9 @@ class PlanActFlow(BaseFlow):
                     if not self.is_parent:
                         error_msg = "⚠️ This agent is not allowed to create sub-agents. Only parent agents can use execute_parallel_tasks."
                         logger.warning(f"Blocked parallel task execution: agent is not a parent (session: {session_id})")
-                        yield MessageEvent(message=error_msg)
+                        event = MessageEvent(message=error_msg)
+                        event.is_parent = self.is_parent
+                        yield event
                         self.memory.add_tool_call(session_id, iteration, tool_name, tool_args)
                         self.memory.add_tool_result(session_id, iteration, {"success": False, "error": error_msg})
                         consecutive_failures += 1
@@ -366,6 +386,12 @@ class PlanActFlow(BaseFlow):
                     tool_name=tool_name,
                     tool_args=tool_args,
                 )):
+                    # Set agent information for parent agent if not already set
+                    if event.is_parent is None:
+                        event.is_parent = self.is_parent
+                    if event.is_parent and event.agent_index is None:
+                        event.agent_index = None  # Parent agent has no index
+                    
                     if isinstance(event, MessageEvent):
                         yield event
                     elif isinstance(event, ToolCallEvent):
@@ -430,7 +456,9 @@ class PlanActFlow(BaseFlow):
                                 "content": reflection_message
                             })
                             self.consecutive_search_replace_failures = 0
-                            yield MessageEvent(message=reflection_message)
+                            event = MessageEvent(message=reflection_message)
+                            event.is_parent = self.is_parent
+                            yield event
                             
                             # Also trigger plan revision
                             if self.current_plan:
@@ -457,7 +485,9 @@ class PlanActFlow(BaseFlow):
                                 "role": "user",
                                 "content": re_read_prompt
                             })
-                            yield MessageEvent(message=re_read_prompt)
+                            event = MessageEvent(message=re_read_prompt)
+                            event.is_parent = self.is_parent
+                            yield event
                 
                 if is_report:
                     # Before returning, validate that if search_replace was used, linter was run after
@@ -466,7 +496,9 @@ class PlanActFlow(BaseFlow):
                         last_file_path = self._get_last_search_replace_file_path()
                         if last_file_path:
                             logger.info(f"Report blocked: auto-running linter on {last_file_path}")
-                            yield MessageEvent(message="⚠️ Search_replace tool was used but linter was not run. Auto-running linter now...")
+                            event = MessageEvent(message="⚠️ Search_replace tool was used but linter was not run. Auto-running linter now...")
+                            event.is_parent = self.is_parent
+                            yield event
                             
                             # Auto-run linter
                             async for event in self._auto_run_linter(last_file_path, session_id, iteration):
@@ -476,7 +508,9 @@ class PlanActFlow(BaseFlow):
                             if not self._validate_search_replace_linter_sequence():
                                 error_msg = "⚠️ Linter check failed or found errors. Please fix the errors before reporting."
                                 logger.warning(f"Report still blocked after auto-linter: {error_msg}")
-                                yield MessageEvent(message=error_msg)
+                                event = MessageEvent(message=error_msg)
+                                event.is_parent = self.is_parent
+                                yield event
                                 self.memory.messages.append({
                                     "role": "user",
                                     "content": error_msg
@@ -488,7 +522,9 @@ class PlanActFlow(BaseFlow):
                         else:
                             error_msg = "⚠️ Search_replace tool was used but linter was not run successfully after the last search_replace. Please run the linter tool to verify the code changes."
                             logger.warning(f"Report blocked: {error_msg}")
-                            yield MessageEvent(message=error_msg)
+                            event = MessageEvent(message=error_msg)
+                            event.is_parent = self.is_parent
+                            yield event
                             self.memory.messages.append({
                                 "role": "user",
                                 "content": error_msg
@@ -501,10 +537,14 @@ class PlanActFlow(BaseFlow):
                 answer_text = result.get("answer", "") or ""
                 if answer_text:
                     self.memory.add_assistant_message(session_id, answer_text)
-                yield MessageEvent(message=answer_text)
+                event = MessageEvent(message=answer_text)
+                event.is_parent = self.is_parent
+                yield event
                 return
         
         logger.warning(f"Reached max iterations ({self.MAX_ITERATION}), returning error message")
         error_message = "Sorry. Hit max iterations limit"
-        yield ReportEvent(message=error_message)
+        event = ReportEvent(message=error_message)
+        event.is_parent = self.is_parent
+        yield event
 

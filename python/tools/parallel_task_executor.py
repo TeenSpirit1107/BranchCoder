@@ -189,6 +189,11 @@ class ParallelTaskExecutorTool(MCPTool):
                         original_message = event.message or ""
                         event.message = f"[Subtask {index + 1}] {original_message}"
                     
+                    # Set agent information for child agents
+                    # Use index % 8 to cycle through 8 colors for child agents
+                    event.is_parent = False
+                    event.agent_index = index % 8
+                    
                     yield event
             
             # Cancel pending tasks

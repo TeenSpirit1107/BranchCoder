@@ -41,20 +41,58 @@ body {
     background-color: var(--vscode-input-background);
     color: var(--vscode-input-foreground);
     border: 1px solid var(--vscode-input-border);
+    border-left-width: 3px; /* Default left border width for agent colors */
+}
+
+/* Agent color definitions */
+/* Parent agent color */
+.message.agent-parent {
+    border-left: 3px solid #007acc; /* Blue for parent agent */
+}
+
+/* Child agent colors (8 colors, cycling for more than 8) */
+.message.agent-child-0 {
+    border-left: 3px solid #fa8072; /* Salmon */
+}
+
+.message.agent-child-1 {
+    border-left: 3px solid #ffa500; /* Orange */
+}
+
+.message.agent-child-2 {
+    border-left: 3px solid #ffd700; /* Yellow */
+}
+
+.message.agent-child-3 {
+    border-left: 3px solid #32cd32; /* Green */
+}
+
+.message.agent-child-4 {
+    border-left: 3px solid #34c0c0; /* Teal */
+}
+
+.message.agent-child-5 {
+    border-left: 3px solid #0000ff; /* Blue */
+}
+
+.message.agent-child-6 {
+    border-left: 3px solid #ac04b8; /* Pink Purple (Hot Pink/Magenta) */
+}
+
+.message.agent-child-7 {
+    border-left: 3px solid #8a2be2; /* Blue Purple (Blue Violet) */
 }
 
 /* Tool call message style */
 .message.tool-call {
     background-color: var(--vscode-editor-lineHighlightBackground);
     border: 1px solid var(--vscode-textLink-foreground);
-    border-left: 3px solid var(--vscode-textLink-foreground);
 }
 
 /* Tool result message style */
 .message.tool-result {
     background-color: var(--vscode-editor-lineHighlightBackground);
     border: 1px solid var(--vscode-textLink-foreground);
-    border-left: 3px solid #4ec9b0; /* Green accent for success */
 }
 
 /* Tool header (tool name display) */
