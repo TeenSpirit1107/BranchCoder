@@ -155,12 +155,14 @@ class ReActFlow(BaseFlow):
                     elif isinstance(event, ReportEvent):
                         is_report = True
                         yield event
-                    # TODO(Yimeng): fix looping logic
-                    if tool_result is None:
-                        tool_result = {"error": "Tool execution returned no result"}
-
-                    self.memory.add_tool_call(session_id, iteration, tool_name, tool_args)
-                    self.memory.add_tool_result(session_id, iteration, tool_result)
+                
+                # Check if tool execution returned a result (after loop completes)
+                if tool_result is None:
+                    tool_result = {"error": "Tool execution returned no result"}
+                
+                # Add tool call and result to memory (only once, after loop completes)
+                self.memory.add_tool_call(session_id, iteration, tool_name, tool_args)
+                self.memory.add_tool_result(session_id, iteration, tool_result)
                 
                 if is_report:
                     # Before returning, validate that if search_replace was used, linter was run after
