@@ -10,6 +10,9 @@ from typing import Dict, Any, Optional
 from utils.logger import Logger
 from tools.base_tool import MCPTool
 
+# Verbose logging flag: if True, log full file content on matching errors
+VERBOSE = True
+
 logger = Logger('search_replace_tool', log_to_file=False)
 
 
@@ -433,6 +436,12 @@ class SearchReplaceTool(MCPTool):
                 
                 if not start_line_indices:
                     logger.error(f"Start line content not found: {start_line_content[:100]}")
+                    # Log full file content for debugging if VERBOSE is enabled
+                    if VERBOSE:
+                        logger.error(f"File content at time of error (full content, {len(content)} characters, {len(content_lines)} lines):")
+                        logger.error("=" * 80)
+                        logger.error(content)
+                        logger.error("=" * 80)
                     return {
                         "success": False,
                         "error": f"Start line anchor not found: {start_line_content[:100]}",
@@ -454,6 +463,23 @@ class SearchReplaceTool(MCPTool):
                 
                 if not matches:
                     logger.error(f"End line content not found after any start line: {end_line_content[:100]}")
+                    # Log full file content for debugging if VERBOSE is enabled
+                    if VERBOSE:
+                        logger.error(f"File content at time of error (full content, {len(content)} characters, {len(content_lines)} lines):")
+                        logger.error("=" * 80)
+                        logger.error(content)
+                        logger.error("=" * 80)
+                    # Also log context around found start lines for quick reference
+                    logger.error(f"Found start lines at: {[idx + 1 for idx in start_line_indices]}")
+                    if VERBOSE:
+                        for start_idx in start_line_indices[:3]:  # Log context for first 3 start lines
+                            start_context = max(0, start_idx - 5)
+                            end_context = min(len(content_lines), start_idx + 20)
+                            context_lines = content_lines[start_context:end_context]
+                            logger.error(f"Context around start line {start_idx + 1} (lines {start_context + 1}-{end_context}):")
+                            for i, line in enumerate(context_lines, start=start_context + 1):
+                                marker = ">>> " if i == start_idx + 1 else "    "
+                                logger.error(f"{marker}{i:4d}: {line}")
                     return {
                         "success": False,
                         "error": f"End line anchor not found: {end_line_content[:100]} (after any start line)",
@@ -473,6 +499,23 @@ class SearchReplaceTool(MCPTool):
                     else:
                         # No estimate provided, use first match and warn
                         logger.warning(f"Multiple matches found ({len(matches)}) but no estimated_line_count provided, using first match")
+                        # Log full file content and match locations for debugging if VERBOSE is enabled
+                        if VERBOSE:
+                            logger.error(f"File content at time of error (full content, {len(content)} characters, {len(content_lines)} lines):")
+                            logger.error("=" * 80)
+                            logger.error(content)
+                            logger.error("=" * 80)
+                        logger.error(f"Found {len(matches)} matches at locations: {[(s+1, e+1, lc) for s, e, lc in matches]}")
+                        # Log context around each match for quick reference if VERBOSE is enabled
+                        if VERBOSE:
+                            for match_idx, (s, e, lc) in enumerate(matches[:3], 1):  # Log first 3 matches
+                                start_context = max(0, s - 5)
+                                end_context = min(len(content_lines), e + 5)
+                                context_lines = content_lines[start_context:end_context]
+                                logger.error(f"Match {match_idx} context (lines {start_context + 1}-{end_context}, match at {s+1}-{e+1}):")
+                                for i, line in enumerate(context_lines, start=start_context + 1):
+                                    marker = ">>> " if s + 1 <= i <= e + 1 else "    "
+                                    logger.error(f"{marker}{i:4d}: {line}")
                         start_line_idx, end_line_idx, _ = matches[0]
                         return {
                             "success": False,
@@ -540,6 +583,16 @@ class SearchReplaceTool(MCPTool):
                 
         except Exception as e:
             logger.error(f"Error in search_replace: {e}", exc_info=True)
+            # Try to log full file content if it was read and VERBOSE is enabled
+            if VERBOSE:
+                try:
+                    if 'content' in locals():
+                        logger.error(f"File content at time of error (full content, {len(content)} characters):")
+                        logger.error("=" * 80)
+                        logger.error(content)
+                        logger.error("=" * 80)
+                except:
+                    pass  # Ignore errors when logging file content
             return {
                 "success": False,
                 "error": str(e),
