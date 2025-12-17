@@ -19,51 +19,14 @@ def dijkstra(graph, start, end):
     Returns:
     (path, distances): path list and distance dictionary
     """
-    # Initialize distance dictionary
-    distances = {node: float('inf') for node in graph.keys()}
-    distances[start] = 0
-    
-    # Previous node dictionary, used to reconstruct path
-    previous = {node: None for node in graph.keys()}
-    
-    # Priority queue: (distance, node)
-    pq = [(0, start)]
-    visited = set()
-    
-    while pq:
-        current_dist, current_node = heapq.heappop(pq)
-        
-        if current_node in visited:
-            continue
-        
-        visited.add(current_node)
-        
-        # If reached target node, can exit early
-        if current_node == end:
-            break
-        
-        # Traverse neighbor nodes
-        for neighbor, weight in graph.get(current_node, []):
-            if neighbor in visited:
-                continue
-            
-            new_dist = current_dist + weight
-            
-            if new_dist < distances[neighbor]:
-                distances[neighbor] = new_dist
-                previous[neighbor] = current_node
-                heapq.heappush(pq, (new_dist, neighbor))
-    
-    # Reconstruct path
-    path = []
-    if distances[end] != float('inf'):
-        current = end
-        while current is not None:
-            path.append(current)
-            current = previous[current]
-        path.reverse()
-    
-    return path, distances
+    # TODO: Implement the dijkstra function
+    # 1) Initialize distances (start=0, others=inf) and previous (for reconstructing path)
+    # 2) Use a priority queue (min-heap) to repeatedly pick the node with smallest known distance
+    # 3) Relax edges for each neighbor: if a shorter path is found, update distances/previous and push into heap
+    # 4) Early exit if end is popped (optional optimization)
+    # 5) Reconstruct path from end via previous; if end unreachable, return empty path
+    # Return (path, distances)
+    pass
 
 
 def floyd_warshall(graph):
@@ -76,53 +39,13 @@ def floyd_warshall(graph):
     Returns:
     (distances, paths): distance matrix and path matrix
     """
-    nodes = sorted(graph.keys())
-    n = len(nodes)
-    node_to_index = {node: i for i, node in enumerate(nodes)}
-    
-    # Initialize distance matrix
-    dist = [[float('inf')] * n for _ in range(n)]
-    # Initialize path matrix
-    next_node = [[None] * n for _ in range(n)]
-    
-    # Diagonal is 0
-    for i in range(n):
-        dist[i][i] = 0
-    
-    # Initialize direct edges
-    for u in nodes:
-        for v, weight in graph.get(u, []):
-            i = node_to_index[u]
-            j = node_to_index[v]
-            dist[i][j] = weight
-            next_node[i][j] = j
-    
-    # Floyd-Warshall main algorithm
-    for k in range(n):
-        for i in range(n):
-            for j in range(n):
-                if dist[i][k] + dist[k][j] < dist[i][j]:
-                    dist[i][j] = dist[i][k] + dist[k][j]
-                    next_node[i][j] = next_node[i][k]
-    
-    def get_path(start, end):
-        """Reconstruct path based on next_node matrix"""
-        if dist[node_to_index[start]][node_to_index[end]] == float('inf'):
-            return []
-        
-        path = [start]
-        i = node_to_index[start]
-        j = node_to_index[end]
-        
-        while i != j:
-            i = next_node[i][j]
-            if i is None:
-                return []
-            path.append(nodes[i])
-        
-        return path
-    
-    return dist, get_path
+    # TODO: Implement the floyd_warshall function
+    # 1) Build node index mapping; initialize dist matrix (diag=0, others=inf) and next_node for paths
+    # 2) Fill dist/next_node with direct edges from graph
+    # 3) Triple loop over k, i, j to update dist via intermediate k (classic Floyd update)
+    # 4) Provide get_path(start, end) to reconstruct path using next_node; unreachable -> []
+    # Return (dist, get_path)
+    pass
 
 
 def greedy_shortest_path(graph, start, end):
@@ -154,4 +77,3 @@ def greedy_shortest_path(graph, start, end):
     #   - Create distances dictionary where distances[end] = total_distance, others = float('inf')
     #   - Return (path, distances)
     pass
-
