@@ -453,6 +453,39 @@ class PlanActFlow(BaseFlow):
                         self.consecutive_search_replace_failures += 1
                         logger.warning(f"Search_replace tool failed. Consecutive failures: {self.consecutive_search_replace_failures}/{self.MAX_SEARCH_REPLACE_FAILURES}")
                         
+                        # Check if failure is due to function not found (anchor not found)
+                        error_msg = tool_result.get("error", "") if isinstance(tool_result, dict) else ""
+                        is_anchor_not_found = (
+                            "anchor not found" in error_msg.lower() or 
+                            ("not found" in error_msg.lower() and ("start line" in error_msg.lower() or "end line" in error_msg.lower()))
+                        )
+                        
+                        if is_anchor_not_found:
+                            file_path = tool_args.get("file_path", "")
+                            new_string = tool_args.get("new_string", "")
+                            logger.info(f"Search_replace failed because function/block not found. Suggesting to re-read file and reconsider approach.")
+                            suggestion_message = (
+                                f"⚠️ search_replace failed: Could not find the function/code block to modify.\n\n"
+                                f"Please follow these steps:\n"
+                                f"1. First, use `cat {file_path}` to re-read the file and see its current actual content\n"
+                                f"2. Based on the file's actual content, decide on a strategy:\n"
+                                f"   - Option (1): If the function exists but the content is slightly different, adjust the start_line_content and end_line_content in search_replace to match the actual code in the current file\n"
+                                f"   - Option (2): If the function truly doesn't exist, use append to add new code:\n"
+                                f"     * Use `execute_command` with `echo '...' >> {file_path}` to append single-line content\n"
+                                f"     * Or use `execute_command` with a here-document to append multi-line content\n"
+                                f"3. The content you wanted to add/modify is:\n{new_string[:500]}{'...' if len(new_string) > 500 else ''}\n\n"
+                                f"Please re-read the file first, then choose the appropriate approach based on the actual situation."
+                            )
+                            self.memory.messages.append({
+                                "role": "user",
+                                "content": suggestion_message
+                            })
+                            event = MessageEvent(message="💡 search_replace failed - target not found. Please re-read the file first, then decide whether to adjust parameters or use append.")
+                            event.is_parent = self.is_parent
+                            yield event
+                            # Continue to next iteration to let LLM re-read file and decide
+                            continue
+                        
                         # For child agents: trigger reflection if last 2 attempts both failed
                         if not self.is_parent and len(self.recent_search_replace_results) >= 2:
                             last_two_failed = not self.recent_search_replace_results[-1] and not self.recent_search_replace_results[-2]
