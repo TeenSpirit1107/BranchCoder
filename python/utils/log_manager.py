@@ -157,21 +157,41 @@ def archive_logs_by_date_range(
             with open(log_file, 'r', encoding='utf-8') as f:
                 all_lines = f.readlines()
             
-            for line in all_lines:
+            # Find the start of the range: first line with timestamp >= start_dt
+            start_index = None
+            for i, line in enumerate(all_lines):
                 timestamp = extract_timestamp_from_log_line(line)
-                if timestamp is None:
-                    # If no timestamp found, keep the line in original file
-                    remaining_lines.append(line)
-                    continue
+                if timestamp is not None and timestamp >= start_dt:
+                    start_index = i
+                    break
+            
+            # If no start found, nothing to archive
+            if start_index is None:
+                remaining_lines = all_lines
+            else:
+                # Add all lines before start_index to remaining_lines
+                remaining_lines.extend(all_lines[:start_index])
                 
-                # Check if timestamp is within range (inclusive)
-                if start_dt <= timestamp <= end_dt:
-                    archived_lines.append(line)
-                    # Don't add to remaining_lines if we're removing records
-                    if not remove_records:
+                # Process lines from start_index onwards
+                archiving = True
+                for i in range(start_index, len(all_lines)):
+                    line = all_lines[i]
+                    timestamp = extract_timestamp_from_log_line(line)
+                    
+                    if archiving:
+                        if timestamp is not None and timestamp >= end_dt:
+                            # Found end boundary: stop archiving, add this line to remaining
+                            archiving = False
+                            remaining_lines.append(line)
+                        else:
+                            # Continue archiving: add to archived_lines
+                            archived_lines.append(line)
+                            # Also add to remaining_lines if not removing records
+                            if not remove_records:
+                                remaining_lines.append(line)
+                    else:
+                        # Already stopped archiving, add to remaining_lines
                         remaining_lines.append(line)
-                else:
-                    remaining_lines.append(line)
         except Exception as e:
             print(f"Warning: Failed to read {log_file}: {e}")
             continue
@@ -312,18 +332,38 @@ def remove_logs_by_date_range(
             with open(log_file, 'r', encoding='utf-8') as f:
                 all_lines = f.readlines()
             
-            for line in all_lines:
+            # Find the start of the range: first line with timestamp >= start_dt
+            start_index = None
+            for i, line in enumerate(all_lines):
                 timestamp = extract_timestamp_from_log_line(line)
-                if timestamp is None:
-                    # If no timestamp found, keep the line
-                    remaining_lines.append(line)
-                    continue
+                if timestamp is not None and timestamp >= start_dt:
+                    start_index = i
+                    break
+            
+            # If no start found, nothing to remove
+            if start_index is None:
+                remaining_lines = all_lines
+            else:
+                # Add all lines before start_index to remaining_lines
+                remaining_lines.extend(all_lines[:start_index])
                 
-                # Check if timestamp is within range (inclusive)
-                if start_dt <= timestamp <= end_dt:
-                    removed_lines_count += 1
-                else:
-                    remaining_lines.append(line)
+                # Process lines from start_index onwards
+                removing = True
+                for i in range(start_index, len(all_lines)):
+                    line = all_lines[i]
+                    timestamp = extract_timestamp_from_log_line(line)
+                    
+                    if removing:
+                        if timestamp is not None and timestamp >= end_dt:
+                            # Found end boundary: stop removing, add this line to remaining
+                            removing = False
+                            remaining_lines.append(line)
+                        else:
+                            # Continue removing: count but don't add to remaining_lines
+                            removed_lines_count += 1
+                    else:
+                        # Already stopped removing, add to remaining_lines
+                        remaining_lines.append(line)
         except Exception as e:
             print(f"Warning: Failed to read {log_file}: {e}")
             continue

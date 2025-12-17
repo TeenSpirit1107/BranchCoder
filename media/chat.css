@@ -56,7 +56,7 @@ body {
 }
 
 .message.agent-child-1 {
-    border-left: 3px solid #ffa500; /* Orange */
+    border-left: 3px solid #ff7300; /* Orange */
 }
 
 .message.agent-child-2 {
@@ -93,6 +93,53 @@ body {
 .message.tool-result {
     background-color: var(--vscode-editor-lineHighlightBackground);
     border: 1px solid var(--vscode-textLink-foreground);
+}
+
+/* Tool call/result with agent colors - Parent agent */
+.message.tool-call.agent-parent,
+.message.tool-result.agent-parent {
+    border-color: #007acc; /* Blue for parent agent */
+}
+
+/* Tool call/result with agent colors - Child agents */
+.message.tool-call.agent-child-0,
+.message.tool-result.agent-child-0 {
+    border-color: #fa8072; /* Salmon */
+}
+
+.message.tool-call.agent-child-1,
+.message.tool-result.agent-child-1 {
+    border-color: #ff7300; /* Orange */
+}
+
+.message.tool-call.agent-child-2,
+.message.tool-result.agent-child-2 {
+    border-color: #ffd700; /* Yellow */
+}
+
+.message.tool-call.agent-child-3,
+.message.tool-result.agent-child-3 {
+    border-color: #32cd32; /* Green */
+}
+
+.message.tool-call.agent-child-4,
+.message.tool-result.agent-child-4 {
+    border-color: #34c0c0; /* Teal */
+}
+
+.message.tool-call.agent-child-5,
+.message.tool-result.agent-child-5 {
+    border-color: #0000ff; /* Blue */
+}
+
+.message.tool-call.agent-child-6,
+.message.tool-result.agent-child-6 {
+    border-color: #ac04b8; /* Pink Purple (Hot Pink/Magenta) */
+}
+
+.message.tool-call.agent-child-7,
+.message.tool-result.agent-child-7 {
+    border-color: #8a2be2; /* Blue Purple (Blue Violet) */
 }
 
 /* Tool header (tool name display) */
@@ -377,20 +424,39 @@ body {
 
 #sendButton {
     padding: 8px 16px;
-    background-color: var(--vscode-button-background);
-    color: var(--vscode-button-foreground);
     border: none;
     border-radius: 4px;
     cursor: pointer;
     font-family: var(--vscode-font-family);
     font-size: var(--vscode-font-size);
+    transition: background-color 0.2s, color 0.2s;
 }
 
-#sendButton:hover {
-    background-color: var(--vscode-button-hoverBackground);
+/* Send button (green) */
+#sendButton.send {
+    background-color: #28a745; /* Green */
+    color: white;
 }
 
-#sendButton:active {
+#sendButton.send:hover {
+    background-color: #218838; /* Darker green on hover */
+}
+
+#sendButton.send:active {
+    opacity: 0.8;
+}
+
+/* Interrupt button (red) */
+#sendButton.interrupt {
+    background-color: #dc3545; /* Red */
+    color: white;
+}
+
+#sendButton.interrupt:hover {
+    background-color: #c82333; /* Darker red on hover */
+}
+
+#sendButton.interrupt:active {
     opacity: 0.8;
 }
 
