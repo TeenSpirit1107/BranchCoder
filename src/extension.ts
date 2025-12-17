@@ -868,6 +868,9 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
                             await vscode.commands.executeCommand('aiChat.rejectPatch', message.sessionId);
                         }
                         return;
+                    case 'interruptWorkflow':
+                        this.chatPanel?.interruptWorkflow();
+                        return;
                 }
             },
             null,
