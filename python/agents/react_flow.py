@@ -26,6 +26,8 @@ class ReActFlow(BaseFlow):
         set_workspace_dir(workspace_dir)
         self.memory = Memory(workspace_dir, is_parent=is_parent)
         self.consecutive_search_replace_failures = 0
+        # Track recent search_replace results for child agents (last 2 attempts)
+        self.recent_search_replace_results: List[bool] = []
         logger.info(f"Flow agent initialized with {len(self.tools_definitions)} tools, is_parent={is_parent}")
     
     def _validate_search_replace_linter_sequence(self) -> bool:
@@ -106,11 +108,14 @@ class ReActFlow(BaseFlow):
         
         # Reset search_replace failure counter for new user message
         self.consecutive_search_replace_failures = 0
+        self.recent_search_replace_results = []
         iteration = 0
         while iteration < self.MAX_ITERATION:
             iteration += 1
             logger.debug(f"Flow iteration {iteration}")
-            yield MessageEvent(message=f"Thinking... (Iteration: {iteration})")
+            event = MessageEvent(message=f"Thinking... (Iteration: {iteration})")
+            event.is_parent = self.is_parent
+            yield event
             result = await self.llm_client.ask(
                 messages=self.memory.get_messages(),
                 tools=self.tools_definitions,
@@ -124,7 +129,9 @@ class ReActFlow(BaseFlow):
                     if not self.is_parent:
                         error_msg = "⚠️ This agent is not allowed to create sub-agents. Only parent agents can use execute_parallel_tasks."
                         logger.warning(f"Blocked parallel task execution: agent is not a parent (session: {session_id})")
-                        yield MessageEvent(message=error_msg)
+                        event = MessageEvent(message=error_msg)
+                        event.is_parent = self.is_parent
+                        yield event
                         self.memory.add_tool_call(session_id, iteration, tool_name, tool_args)
                         self.memory.add_tool_result(session_id, iteration, {"success": False, "error": error_msg})
                         continue
@@ -133,6 +140,7 @@ class ReActFlow(BaseFlow):
                     context_messages = copy.deepcopy(self.memory.get_messages())
                     tool_args.setdefault("context_messages", context_messages)
                     tool_args.setdefault("parent_session_id", session_id)
+                    tool_args.setdefault("parent_flow_type", "react")
 
                 logger.info(f"Tool call: {tool_name} with args: {tool_args}")
 
@@ -144,6 +152,12 @@ class ReActFlow(BaseFlow):
                     tool_name=tool_name,
                     tool_args=tool_args,
                 )):
+                    # Set agent information for parent agent if not already set
+                    if event.is_parent is None:
+                        event.is_parent = self.is_parent
+                    if event.is_parent and event.agent_index is None:
+                        event.agent_index = None  # Parent agent has no index
+                    
                     if isinstance(event, MessageEvent):
                         yield event
                     elif isinstance(event, ToolCallEvent):
@@ -154,19 +168,23 @@ class ReActFlow(BaseFlow):
                     elif isinstance(event, ReportEvent):
                         is_report = True
                         yield event
-                    # TODO(Yimeng): fix looping logic
-                    if tool_result is None:
-                        tool_result = {"error": "Tool execution returned no result"}
-
-                    self.memory.add_tool_call(session_id, iteration, tool_name, tool_args)
-                    self.memory.add_tool_result(session_id, iteration, tool_result)
+                
+                # Check if tool execution returned a result (after loop completes)
+                if tool_result is None:
+                    tool_result = {"error": "Tool execution returned no result"}
+                
+                # Add tool call and result to memory (only once, after loop completes)
+                self.memory.add_tool_call(session_id, iteration, tool_name, tool_args)
+                self.memory.add_tool_result(session_id, iteration, tool_result)
                 
                 if is_report:
                     # Before returning, validate that if search_replace was used, linter was run after
                     if not self._validate_search_replace_linter_sequence():
                         error_msg = "⚠️ Search_replace tool was used but linter was not run successfully after the last search_replace. Please run the linter tool to verify the code changes."
                         logger.warning(f"Report blocked: {error_msg}")
-                        yield MessageEvent(message=error_msg)
+                        event = MessageEvent(message=error_msg)
+                        event.is_parent = self.is_parent
+                        yield event
                         self.memory.messages.append({
                             "role": "user",
                             "content": error_msg
@@ -184,9 +202,41 @@ class ReActFlow(BaseFlow):
                           tool_result.get("status") == "failed"))
                     )
                     
+                    # Track recent results (keep last 2 for child agents)
+                    self.recent_search_replace_results.append(not is_search_replace_failed)  # True for success, False for failure
+                    if len(self.recent_search_replace_results) > 2:
+                        self.recent_search_replace_results.pop(0)
+                    
                     if is_search_replace_failed:
                         self.consecutive_search_replace_failures += 1
                         logger.warning(f"Search_replace tool failed. Consecutive failures: {self.consecutive_search_replace_failures}/{self.MAX_SEARCH_REPLACE_FAILURES}")
+                        
+                        # For child agents: trigger reflection if last 2 attempts both failed
+                        if not self.is_parent and len(self.recent_search_replace_results) >= 2:
+                            last_two_failed = not self.recent_search_replace_results[-1] and not self.recent_search_replace_results[-2]
+                            if last_two_failed:
+                                logger.warning(f"Child agent: Last 2 search_replace attempts failed. Triggering reflection to fix approach.")
+                                reflection_message = SEARCH_REPLACE_FAILURE_REFLECTION_PROMPT.format(
+                                    failure_count=2,
+                                    workspace_dir=self.workspace_dir
+                                )
+                                # Add a more specific prompt for child agents
+                                child_reflection_prompt = (
+                                    f"⚠️ CRITICAL: Your last 2 search_replace attempts on this file have failed. "
+                                    f"You need to stop and think about why they failed before trying again.\n\n"
+                                    f"{reflection_message}\n\n"
+                                    f"Please analyze the error messages from the failed attempts, re-read the file to see its current state, "
+                                    f"and develop a better strategy before attempting another search_replace."
+                                )
+                                self.memory.messages.append({
+                                    "role": "user",
+                                    "content": child_reflection_prompt
+                                })
+                                event = MessageEvent(message="🤔 Reflecting on search_replace failures... Analyzing the issue to develop a better approach.")
+                                event.is_parent = self.is_parent
+                                yield event
+                                # Continue to next iteration to let LLM think and respond
+                                continue
                         
                         if self.consecutive_search_replace_failures >= self.MAX_SEARCH_REPLACE_FAILURES:
                             logger.error(f"Reached max consecutive search_replace failures ({self.MAX_SEARCH_REPLACE_FAILURES}). Triggering reflection.")
@@ -199,7 +249,9 @@ class ReActFlow(BaseFlow):
                                 "content": reflection_message
                             })
                             self.consecutive_search_replace_failures = 0
-                            yield MessageEvent(message=reflection_message)
+                            event = MessageEvent(message=reflection_message)
+                            event.is_parent = self.is_parent
+                            yield event
                             # Continue iteration after reflection
                             continue
                     else:
@@ -207,6 +259,25 @@ class ReActFlow(BaseFlow):
                         if self.consecutive_search_replace_failures > 0:
                             logger.info(f"Search_replace tool succeeded. Resetting failure counter from {self.consecutive_search_replace_failures} to 0.")
                         self.consecutive_search_replace_failures = 0
+                        
+                        # Force agent to re-read file after successful search_replace
+                        # This ensures agent uses updated file content for subsequent modifications
+                        file_path = tool_args.get("file_path", "")
+                        if file_path:
+                            re_read_prompt = (
+                                f"⚠️ IMPORTANT: search_replace succeeded on {file_path}. "
+                                f"The file content has changed. You MUST re-read the file using `cat {file_path}` "
+                                f"before attempting any further modifications to this file. "
+                                f"This ensures your old_string matches the current file state."
+                            )
+                            logger.info(f"Adding file re-read prompt for {file_path}")
+                            self.memory.messages.append({
+                                "role": "user",
+                                "content": re_read_prompt
+                            })
+                            event = MessageEvent(message=re_read_prompt)
+                            event.is_parent = self.is_parent
+                            yield event
             else:
                 # LLM returned text response without tool calls
                 answer_text = result.get("answer", "") or ""
@@ -215,12 +286,16 @@ class ReActFlow(BaseFlow):
                     # But handle gracefully if it doesn't
                     logger.warning(f"LLM returned text response without calling send_message tool: {answer_text[:100]}")
                     self.memory.add_assistant_message(session_id, answer_text)
-                    yield MessageEvent(message=answer_text)
+                    event = MessageEvent(message=answer_text)
+                    event.is_parent = self.is_parent
+                    yield event
                 return
 
         logger.warning(f"Reached max iterations ({self.MAX_ITERATION}), returning error message")
         error_message = "Sorry. Hit max iterations limit"
-        yield ReportEvent(message=error_message)
+        event = ReportEvent(message=error_message)
+        event.is_parent = self.is_parent
+        yield event
 
 
 # Backward compatibility alias

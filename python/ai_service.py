@@ -4,7 +4,7 @@ import asyncio
 from typing import Dict, Any, Optional
 from dataclasses import asdict
 from utils.logger import Logger
-from agents.flow import ReActFlow
+from agents.react_flow import ReActFlow
 from agents.planact_flow import PlanActFlow
 
 logger = Logger('ai_service', log_to_file=False)

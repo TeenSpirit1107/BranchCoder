@@ -6,26 +6,36 @@ from typing import Any, Dict, List, Optional, AsyncGenerator
 class BaseEvent(ABC):
     type: str
     message: str = ""
+    is_parent: Optional[bool] = None  # True for parent agent, False for child agent, None if unknown
+    agent_index: Optional[int] = None  # Index of child agent (0-7), None for parent agent
 
 @dataclass
 class ToolCallEvent(BaseEvent):
     type: str = "tool_call"
     tool_name: str = ""
     tool_args: dict = None
+    is_parent: Optional[bool] = None
+    agent_index: Optional[int] = None
 
 @dataclass
 class ToolResultEvent(BaseEvent):
     type: str = "tool_result"
     tool_name: str = ""
     result: dict = None
+    is_parent: Optional[bool] = None
+    agent_index: Optional[int] = None
 
 @dataclass
 class MessageEvent(BaseEvent):
     type: str = "notification_message"
+    is_parent: Optional[bool] = None
+    agent_index: Optional[int] = None
 
 @dataclass
 class ReportEvent(BaseEvent):
     type: str = "final_message"
+    is_parent: Optional[bool] = None
+    agent_index: Optional[int] = None
 
 
 class BaseFlow(ABC):

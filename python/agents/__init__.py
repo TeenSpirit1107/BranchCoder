@@ -1,7 +1,7 @@
 # Flow module for agentic AI processing
 
-from agents.flow import ReActFlow, FlowAgent
+from agents.react_flow import ReActFlow
 from agents.planact_flow import PlanActFlow
 from agents.memory import Memory
 
-__all__ = ['ReActFlow', 'FlowAgent', 'PlanActFlow', 'Memory']
+__all__ = ['ReActFlow', 'PlanActFlow', 'Memory']

@@ -39,11 +39,11 @@ class DummyChatClient:
 async def test_parallel_tool_flow(monkeypatch):
     monkeypatch.setattr("agents.flow.AsyncChatClientWrapper", DummyChatClient)
 
-    from agents.flow import FlowAgent
+    from agents.react_flow import ReActFlow
     from models import MessageEvent, ToolResultEvent
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        agent = FlowAgent(tmpdir)
+        agent = ReActFlow(tmpdir)
         all_events = []
 
         async for event in agent.process("Please run parallel tasks", "parent-session"):
