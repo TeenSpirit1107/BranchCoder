@@ -59,9 +59,15 @@ When the user says "complete the TODO in the project" or similar requests, it me
 
 ⚡ PARALLEL EXECUTION STRATEGY:
 - Use execute_parallel_tasks for 2+ independent subtasks
-- 🔒 CRITICAL: ONE file per child agent. Group all TODOs in same file into ONE task
-- ✅ Parallelize: Multiple files ("Fix A.py and B.py")
-- ❌ Sequential: Same file ("Complete TODOs in main.py" → one agent handles all)
+- 🔒 CRITICAL: One file can only be handled by ONE child agent (agent count ≤ file count)
+- 📁 FILE-BASED DIVISION: When splitting tasks, ensure no file is assigned to multiple agents:
+  - ✅ CORRECT: "Fix A.py" → child 1, "Fix B.py" → child 2, "Fix C.py" → child 3 (3 files, 3 agents)
+  - ✅ CORRECT: "Complete TODOs in A.py" → child 1, "Complete TODOs in B.py" → child 2 (2 files, 2 agents)
+  - ✅ CORRECT: Group all TODOs in same file into ONE task ("Complete all TODOs in main.py" → 1 agent handles 1 file)
+  - ✅ CORRECT: "Fix A.py and B.py" → can be 1 agent handling 2 files, or 2 agents (one per file)
+  - ❌ WRONG: "Fix A.py" → split into child 1 (handles part 1) and child 2 (handles part 2) - ONE file cannot be split across multiple agents
+  - ❌ WRONG: Multiple agents assigned to the same file
+- Rule: Each file must be handled by exactly ONE child agent (but one agent can handle multiple files if needed)
 
 Remember: DO NOT send messages to the user. Complete tasks directly and quickly. When you need to modify code files, use the search_replace tool.
 
@@ -127,30 +133,25 @@ SEARCH_REPLACE_FAILURE_REFLECTION_PROMPT = """
 Search_replace tool failed {failure_count} times. Reflect before retrying:
 
 1. Are you repeating the same mistake? Review error messages carefully.
-2. Is your codebase understanding correct? Use workspace_rag_retrieve or get_workspace_structure.
-3. Is your old_string providing enough context? Include function signatures, class names, comments, or surrounding code to ensure unique matching.
-4. Are you using exact whitespace and formatting? The old_string must match exactly as it appears in the file.
-5. Check: correct file path? code exists? syntax issues?
 
 2. Is your understanding of the codebase correct?
-   - Consider using workspace_rag_retrieve to get more context
+   - Use workspace_rag_retrieve to get more context
    - Use get_workspace_structure to verify file locations and structure
    - Re-read the relevant code sections using execute_command (cat file)
 
 3. Is your old_string specific enough?
-   - Include more context: function signatures, class definitions, comments
-   - Check for exact whitespace and indentation
+   - Include more context: function signatures, class definitions, comments, or surrounding code
+   - Check for exact whitespace and indentation (must match exactly as it appears in the file)
    - Verify the code exists in the file by reading it first
 
-4. Do you need to gather more context or information?
-   - Search for similar patterns in the codebase
-   - Look for documentation or comments that might help
-   - Check if there are dependencies or imports you're missing
+4. Is the file path correct?
+   - Can be absolute or relative to workspace
+   - Read the file first to verify it exists and contains the code you're trying to replace
 
-5. Are there any patterns in the failures that suggest a fundamental issue?
-   - Is the file path correct? Can be absolute or relative to workspace.
-   - Are you trying to replace code that doesn't exist? Read the file first to verify.
-   - Is there a whitespace or formatting mismatch? Check tabs vs spaces, line endings, etc.
+5. Are there any other fundamental issues?
+   - Check for whitespace/formatting mismatches (tabs vs spaces, line endings, etc.)
+   - Search for similar patterns in the codebase if needed
+   - Look for dependencies or imports you might be missing
 
 Please analyze the previous failures carefully, gather necessary information, and adjust your strategy before attempting another search_replace operation.
 """
