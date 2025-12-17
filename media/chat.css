@@ -377,20 +377,39 @@ body {
 
 #sendButton {
     padding: 8px 16px;
-    background-color: var(--vscode-button-background);
-    color: var(--vscode-button-foreground);
     border: none;
     border-radius: 4px;
     cursor: pointer;
     font-family: var(--vscode-font-family);
     font-size: var(--vscode-font-size);
+    transition: background-color 0.2s, color 0.2s;
 }
 
-#sendButton:hover {
-    background-color: var(--vscode-button-hoverBackground);
+/* Send button (green) */
+#sendButton.send {
+    background-color: #28a745; /* Green */
+    color: white;
 }
 
-#sendButton:active {
+#sendButton.send:hover {
+    background-color: #218838; /* Darker green on hover */
+}
+
+#sendButton.send:active {
+    opacity: 0.8;
+}
+
+/* Interrupt button (red) */
+#sendButton.interrupt {
+    background-color: #dc3545; /* Red */
+    color: white;
+}
+
+#sendButton.interrupt:hover {
+    background-color: #c82333; /* Darker red on hover */
+}
+
+#sendButton.interrupt:active {
     opacity: 0.8;
 }
 

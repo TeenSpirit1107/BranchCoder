@@ -10,6 +10,7 @@ export class ChatPanel {
     private currentPatchSessionId: string | null = null;
     private sessionId: string;
     private agentType: string = 'react'; // Default to react
+    private currentPythonProcess: any = null; // Track current Python process for interruption
 
     constructor(
         private readonly webview: vscode.Webview,
@@ -38,6 +39,11 @@ export class ChatPanel {
             }
         });
 
+        // Notify frontend to switch button to interrupt mode
+        this.webview.postMessage({
+            command: 'setButtonInterrupt'
+        });
+
         try {
             // Call Python AI service (events will be streamed and displayed automatically)
             const aiResponse = await this.callPythonAI(userMessage);
@@ -59,6 +65,78 @@ export class ChatPanel {
                     message: `Error: ${errorMessage}`
                 }
             });
+            // Reset button to send mode on error
+            this.webview.postMessage({
+                command: 'setButtonSend'
+            });
+            this.currentPythonProcess = null;
+        }
+    }
+
+    public interruptWorkflow() {
+        if (this.currentPythonProcess && this.currentPythonProcess.pid) {
+            try {
+                // Kill the Python process and all its children
+                // On Unix systems, kill the process group to kill all children
+                if (process.platform !== 'win32') {
+                    // Use negative PID to kill process group (includes all children)
+                    try {
+                        process.kill(-this.currentPythonProcess.pid, 'SIGTERM');
+                    } catch (e) {
+                        // If process group kill fails, try killing the process directly
+                        try {
+                            this.currentPythonProcess.kill('SIGTERM');
+                        } catch (e2) {
+                            console.error('Error killing process:', e2);
+                        }
+                    }
+                } else {
+                    // On Windows, kill the process (children will be handled by OS)
+                    this.currentPythonProcess.kill('SIGTERM');
+                }
+                
+                // Force kill if SIGTERM doesn't work
+                setTimeout(() => {
+                    if (this.currentPythonProcess && this.currentPythonProcess.pid) {
+                        try {
+                            if (process.platform !== 'win32') {
+                                try {
+                                    process.kill(-this.currentPythonProcess.pid, 'SIGKILL');
+                                } catch (e) {
+                                    this.currentPythonProcess.kill('SIGKILL');
+                                }
+                            } else {
+                                this.currentPythonProcess.kill('SIGKILL');
+                            }
+                        } catch (e) {
+                            console.error('Error force killing process:', e);
+                        }
+                    }
+                }, 1000);
+
+                // Notify frontend that workflow was interrupted
+                this.webview.postMessage({
+                    command: 'addEvent',
+                    event: {
+                        type: 'error',
+                        message: '⚠️ Workflow interrupted by user'
+                    }
+                });
+
+                // Reset button to send mode
+                this.webview.postMessage({
+                    command: 'setButtonSend'
+                });
+
+                this.currentPythonProcess = null;
+            } catch (error: any) {
+                console.error('Error interrupting workflow:', error);
+                // Still reset button even if kill fails
+                this.webview.postMessage({
+                    command: 'setButtonSend'
+                });
+                this.currentPythonProcess = null;
+            }
         }
     }
 
@@ -329,9 +407,26 @@ export class ChatPanel {
             }
             const { resolvedPythonPath, aiScriptPath, workspaceDir } = command;
 
-            const pythonProcess = spawn(resolvedPythonPath, [aiScriptPath], {
+            // Create process with process group for proper interruption on Unix
+            const spawnOptions: any = {
                 stdio: ['pipe', 'pipe', 'pipe']
-            });
+            };
+            
+            // On Unix systems, create a new process group so we can kill all children
+            if (process.platform !== 'win32') {
+                spawnOptions.detached = true; // Create new process group
+            }
+            
+            const pythonProcess = spawn(resolvedPythonPath, [aiScriptPath], spawnOptions);
+            
+            // On Unix, unref the process so parent can exit, but keep reference for killing
+            // Note: We keep the reference in this.currentPythonProcess for interruption
+            if (process.platform !== 'win32' && pythonProcess.pid) {
+                pythonProcess.unref();
+            }
+
+            // Store the process for interruption
+            this.currentPythonProcess = pythonProcess;
 
             let output = '';
             let errorOutput = '';
@@ -425,6 +520,14 @@ export class ChatPanel {
             });
 
             pythonProcess.on('close', (code: number | null) => {
+                // Clear the process reference
+                this.currentPythonProcess = null;
+                
+                // Reset button to send mode when process closes
+                this.webview.postMessage({
+                    command: 'setButtonSend'
+                });
+
                 if (code === 0) {
                     // Process any remaining buffer
                     if (buffer.trim()) {
@@ -459,6 +562,14 @@ export class ChatPanel {
             });
 
             pythonProcess.on('error', (error: Error) => {
+                // Clear the process reference
+                this.currentPythonProcess = null;
+                
+                // Reset button to send mode on error
+                this.webview.postMessage({
+                    command: 'setButtonSend'
+                });
+                
                 const errorMsg = `Failed to start Python process: ${error.message}`;
                 if (this.outputChannel) {
                     this.outputChannel.appendLine(`ERROR: ${errorMsg}`);
@@ -656,7 +767,7 @@ export class ChatPanel {
                             placeholder="Type your message here..."
                             rows="2"
                         ></textarea>
-                        <button id="sendButton">Send</button>
+                        <button id="sendButton" class="send">Send</button>
                     </div>
                 </div>
                 <script nonce="${nonce}">
@@ -786,6 +897,8 @@ export class ChatPanel {
                         scrollToBottom();
                     }
                     
+                    let isInterruptMode = false;
+                    
                     function sendMessage() {
                         const text = messageInput.value.trim();
                         if (text) {
@@ -797,7 +910,32 @@ export class ChatPanel {
                         }
                     }
                     
-                    sendButton.addEventListener('click', sendMessage);
+                    function interruptWorkflow() {
+                        vscode.postMessage({
+                            command: 'interruptWorkflow'
+                        });
+                    }
+                    
+                    function setButtonToSend() {
+                        isInterruptMode = false;
+                        sendButton.textContent = 'Send';
+                        sendButton.className = 'send';
+                    }
+                    
+                    function setButtonToInterrupt() {
+                        isInterruptMode = true;
+                        sendButton.textContent = 'Interrupt';
+                        sendButton.className = 'interrupt';
+                    }
+                    
+                    // Handle button click - check mode and call appropriate function
+                    sendButton.addEventListener('click', function() {
+                        if (isInterruptMode) {
+                            interruptWorkflow();
+                        } else {
+                            sendMessage();
+                        }
+                    });
                     messageInput.addEventListener('keydown', (e) => {
                         if (e.key === 'Enter' && !e.shiftKey) {
                             e.preventDefault();
@@ -859,6 +997,12 @@ export class ChatPanel {
                                     patchButtonsContainer.classList.remove('show');
                                     currentPatchSessionId = null;
                                 }
+                                break;
+                            case 'setButtonSend':
+                                setButtonToSend();
+                                break;
+                            case 'setButtonInterrupt':
+                                setButtonToInterrupt();
                                 break;
                         }
                     });
