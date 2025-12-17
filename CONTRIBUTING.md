@@ -25,6 +25,7 @@ All commit messages **must start with one of the allowed prefixes** and follow t
 | `[bugfix]`  | Bug fixes |
 | `[doc]`     | Documentation changes |
 | `[chore]`   | Maintenance tasks (configs, dependencies, tooling, etc.) |
+| `[other]`   | Tasks that doesn't belong to any other category. Try to avoid using this. |
 
 ---
 
@@ -52,6 +53,7 @@ Thank you for your contribution!
 | `[bugfix]`  | 修复 bug |
 | `[doc]`     | 文档相关改动（README、注释等） |
 | `[chore]`   | 杂项改动（构建脚本、配置、依赖、工具等） |
+| `[other]`   | 其他类别之外的提交（如无必要请尽量避免使用）|
 
 ---
 
