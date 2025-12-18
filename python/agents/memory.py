@@ -84,7 +84,7 @@ class Memory:
     def get_session_history(self, session_id: str) -> List[Dict[str, Any]]:
         return self.get_history(session_id)
 
-    async def generate_system_prompt(self) -> str:
+    async def generate_system_prompt(self, parent_information: Optional[str] = None, task: Optional[str] = None) -> str:
         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         workspace_structure = ''
 
@@ -103,14 +103,21 @@ class Memory:
                 workspace_structure = event.result
         
         system_prompt = get_system_prompt(is_parent=self.is_parent)
-        return system_prompt.format(
-            current_time=current_time,
-            workspace_dir=self.workspace_dir,
-            workspace_structure=workspace_structure
-        )
+        format_args = {
+            "current_time": current_time,
+            "workspace_dir": self.workspace_dir,
+            "workspace_structure": workspace_structure
+        }
+        
+        # Add parent_information and task for child agents
+        if not self.is_parent:
+            format_args["parent_information"] = parent_information or "No additional context provided."
+            format_args["task"] = task or "Complete the assigned task."
+        
+        return system_prompt.format(**format_args)
     
-    async def initialize_messages(self, session_id: str) -> List[Dict[str, Any]]:
-        system_prompt = await self.generate_system_prompt()
+    async def initialize_messages(self, session_id: str, parent_information: Optional[str] = None, task: Optional[str] = None) -> List[Dict[str, Any]]:
+        system_prompt = await self.generate_system_prompt(parent_information=parent_information, task=task)
         session_history = self.get_history(session_id)
         self.messages = [
             {"role": "system", "content": system_prompt},

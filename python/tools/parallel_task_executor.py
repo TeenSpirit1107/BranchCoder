@@ -57,8 +57,17 @@ class ParallelTaskExecutorTool(MCPTool):
                             },
                             "minItems": 2
                         },
+                        "parent_information": {
+                            "type": "string",
+                            "description": (
+                                "Summary of information and context that all child agents need to know. "
+                                "This should include: key findings, important context, relevant code patterns, "
+                                "dependencies, or any other information that will help child agents complete their tasks efficiently. "
+                                "This information is shared by ALL child agents."
+                            )
+                        },
                     },
-                    "required": ["tasks"]
+                    "required": ["tasks", "parent_information"]
                 }
             }
         }
@@ -75,7 +84,8 @@ class ParallelTaskExecutorTool(MCPTool):
         tasks: List[str],
         parent_session_id: Optional[str] = None,
         context_messages: Optional[List[Dict[str, Any]]] = None,
-        parent_flow_type: Optional[str] = None
+        parent_flow_type: Optional[str] = None,
+        parent_information: Optional[str] = None
     ) -> AsyncGenerator[BaseEvent, None]:
         """
         Execute tasks in parallel and yield all events from subtasks.
@@ -86,8 +96,6 @@ class ParallelTaskExecutorTool(MCPTool):
             return
 
         logger.info(f"Executing {len(tasks)} parallel tasks with streaming")
-
-        history_snapshot = copy.deepcopy(context_messages) if context_messages else None
 
         # Create queues for each subtask to collect events
         event_queues: List[asyncio.Queue] = [asyncio.Queue() for _ in tasks]
@@ -108,7 +116,7 @@ class ParallelTaskExecutorTool(MCPTool):
                 async for event in agent.process(
                     task_description,
                     sub_session_id,
-                    parent_history=copy.deepcopy(history_snapshot) if history_snapshot else None,
+                    parent_information=parent_information,
                 ):
                     # Put all events into the queue
                     await event_queue.put((index, event))
@@ -221,7 +229,8 @@ class ParallelTaskExecutorTool(MCPTool):
         tasks: List[str],
         parent_session_id: Optional[str] = None,
         context_messages: Optional[List[Dict[str, Any]]] = None,
-        parent_flow_type: Optional[str] = None
+        parent_flow_type: Optional[str] = None,
+        parent_information: Optional[str] = None
     ) -> Dict[str, Any]:
         if not tasks:
             return {
@@ -230,8 +239,6 @@ class ParallelTaskExecutorTool(MCPTool):
             }
 
         logger.info(f"Executing {len(tasks)} parallel tasks")
-
-        history_snapshot = copy.deepcopy(context_messages) if context_messages else None
 
         async def run_subtask(index: int, task_description: str) -> Dict[str, Any]:
             sub_session_id = f"{parent_session_id}_sub_{index}" if parent_session_id else f"parallel_sub_{index}"
@@ -249,7 +256,7 @@ class ParallelTaskExecutorTool(MCPTool):
                 async for event in agent.process(
                     task_description,
                     sub_session_id,
-                    parent_history=copy.deepcopy(history_snapshot) if history_snapshot else None,
+                    parent_information=parent_information,
                 ):
                     if isinstance(event, MessageEvent):
                         if event.message and not event.message.startswith("Thinking"):
