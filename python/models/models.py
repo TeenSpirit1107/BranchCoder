@@ -58,6 +58,7 @@ class BaseFlow(ABC):
         message: str,
         session_id: str,
         parent_history: Optional[List[Dict[str, Any]]] = None,
+        parent_information: Optional[str] = None,
     ) -> AsyncGenerator[BaseEvent, None]:
         """
         Process a user message and yield events during execution.
@@ -65,7 +66,8 @@ class BaseFlow(ABC):
         Args:
             message: The user's input message
             session_id: Unique identifier for the session
-            parent_history: Optional conversation history from parent agent
+            parent_history: Optional conversation history from parent agent (legacy support)
+            parent_information: Optional summary information from parent agent for child agents
             
         Yields:
             BaseEvent: Events during processing (MessageEvent, ToolCallEvent, etc.)

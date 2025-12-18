@@ -294,14 +294,20 @@ class PlanActFlow(BaseFlow):
         message: str,
         session_id: str,
         parent_history: Optional[List[Dict[str, Any]]] = None,
+        parent_information: Optional[str] = None,
     ):
         logger.debug(f"Processing new message for session {session_id}: {message[:80]}{'...' if len(message) > 80 else ''}")
         
         # Initialize memory
-        if parent_history is None:
+        if parent_history is None and parent_information is None:
             self.memory.add_user_message(session_id, message)
             await self.memory.initialize_messages(session_id)
+        elif parent_information is not None:
+            # Child agent: use parent_information and task in system prompt
+            self.memory.add_user_message(session_id, message)
+            await self.memory.initialize_messages(session_id, parent_information=parent_information, task=message)
         else:
+            # Legacy support: if parent_history is provided, use it
             self.memory.messages = copy.deepcopy(parent_history)
             self.memory.messages.append({"role": "user", "content": message})
             self.memory.add_user_message(session_id, message)
@@ -373,8 +379,29 @@ class PlanActFlow(BaseFlow):
                         consecutive_failures += 1
                         continue
                     
-                    context_messages = copy.deepcopy(self.memory.get_messages())
-                    tool_args.setdefault("context_messages", context_messages)
+                    # Extract parent_information from tool_args (should be provided by LLM)
+                    # If not provided, generate a summary from current context
+                    parent_information = tool_args.get("parent_information")
+                    if not parent_information:
+                        # Fallback: create a summary from recent messages
+                        messages = self.memory.get_messages()
+                        # Extract key information from recent assistant and tool messages
+                        recent_context = []
+                        for msg in messages[-10:]:  # Last 10 messages
+                            if msg.get("role") == "assistant" and msg.get("content"):
+                                recent_context.append(f"Assistant: {msg['content'][:200]}")
+                            elif msg.get("role") == "tool" and msg.get("content"):
+                                try:
+                                    import json
+                                    tool_result = json.loads(msg.get("content", "{}"))
+                                    if tool_result.get("success") and tool_result.get("result"):
+                                        recent_context.append(f"Tool result: {str(tool_result.get('result'))[:200]}")
+                                except:
+                                    pass
+                        parent_information = "\n".join(recent_context) if recent_context else "No specific context available."
+                        logger.warning("parent_information not provided, using fallback summary")
+                    
+                    tool_args.setdefault("parent_information", parent_information)
                     tool_args.setdefault("parent_session_id", session_id)
                     tool_args.setdefault("parent_flow_type", "planact")
                 
@@ -537,25 +564,6 @@ class PlanActFlow(BaseFlow):
                         if self.consecutive_search_replace_failures > 0:
                             logger.info(f"Search_replace tool succeeded. Resetting failure counter from {self.consecutive_search_replace_failures} to 0.")
                         self.consecutive_search_replace_failures = 0
-                        
-                        # Force agent to re-read file after successful search_replace
-                        # This ensures agent uses updated file content for subsequent modifications
-                        file_path = tool_args.get("file_path", "")
-                        if file_path:
-                            re_read_prompt = (
-                                f"⚠️ IMPORTANT: search_replace succeeded on {file_path}. "
-                                f"The file content has changed. You MUST re-read the file using `cat {file_path}` "
-                                f"before attempting any further modifications to this file. "
-                                f"This ensures your old_string matches the current file state."
-                            )
-                            logger.info(f"Adding file re-read prompt for {file_path}")
-                            self.memory.messages.append({
-                                "role": "user",
-                                "content": re_read_prompt
-                            })
-                            event = MessageEvent(message=re_read_prompt)
-                            event.is_parent = self.is_parent
-                            yield event
                 
                 if is_report:
                     # Before returning, validate that if search_replace was used, linter was run after

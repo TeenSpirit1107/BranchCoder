@@ -346,11 +346,11 @@ export class ChatPanel {
         try {
             const toolArgs = msg.tool_args || {};
             const filePath = toolArgs.file_path;
-            const startLineContent = toolArgs.start_line_content;
-            const endLineContent = toolArgs.end_line_content;
+            const oldString = toolArgs.old_string;
             const newString = toolArgs.new_string;
+            const replaceAll = toolArgs.replace_all || false;
 
-            if (!filePath || startLineContent === undefined || endLineContent === undefined || newString === undefined) {
+            if (!filePath || oldString === undefined || newString === undefined) {
                 console.warn('search_replace tool_call missing required parameters');
                 return;
             }
@@ -383,45 +383,59 @@ export class ChatPanel {
                 }
             }
 
-            // Apply search_replace to generate afterText
-            // Find lines matching start_line_content and end_line_content
-            const lines = beforeText.split('\n');
-            const normalizeLine = (line: string) => line.replace(/\s+$/, ''); // Remove trailing whitespace
-            
-            let startLineIdx = -1;
-            let endLineIdx = -1;
-            
-            // Find start line
-            for (let i = 0; i < lines.length; i++) {
-                if (normalizeLine(lines[i]) === normalizeLine(startLineContent)) {
-                    startLineIdx = i;
+            // Normalize line endings for matching (preserve original for output)
+            const normalizeLineEndings = (text: string): string => {
+                return text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+            };
+
+            const normalizedBeforeText = normalizeLineEndings(beforeText);
+            const normalizedOldString = normalizeLineEndings(oldString);
+            const normalizedNewString = normalizeLineEndings(newString);
+
+            // Find all matches
+            const matches: Array<{ start: number; end: number }> = [];
+            let start = 0;
+            while (true) {
+                const index = normalizedBeforeText.indexOf(normalizedOldString, start);
+                if (index === -1) {
                     break;
                 }
+                matches.push({ start: index, end: index + normalizedOldString.length });
+                start = index + 1;
             }
-            
-            if (startLineIdx === -1) {
-                console.warn(`search_replace: start_line_content not found in file ${filePath}`);
+
+            if (matches.length === 0) {
+                console.warn(`search_replace: old_string not found in file ${filePath}`);
                 return;
             }
+
+            if (!replaceAll && matches.length > 1) {
+                console.warn(`search_replace: found ${matches.length} occurrences, but replace_all is false. Using first match.`);
+            }
+
+            // Generate afterText by replacing matched strings
+            // Work backwards to preserve indices
+            let afterText = normalizedBeforeText;
+            const matchesToReplace = replaceAll ? matches : [matches[0]];
             
-            // Find end line (must be after start line)
-            for (let i = startLineIdx; i < lines.length; i++) {
-                if (normalizeLine(lines[i]) === normalizeLine(endLineContent)) {
-                    endLineIdx = i;
-                    break;
+            for (const match of matchesToReplace.reverse()) {
+                afterText = afterText.substring(0, match.start) + normalizedNewString + afterText.substring(match.end);
+            }
+
+            // Restore original line endings if needed
+            const detectLineEnding = (text: string): string => {
+                if (text.includes('\r\n')) {
+                    return '\r\n';
+                } else if (text.includes('\r') && !text.includes('\n')) {
+                    return '\r';
                 }
+                return '\n';
+            };
+
+            const originalLineEnding = detectLineEnding(beforeText);
+            if (originalLineEnding !== '\n') {
+                afterText = afterText.replace(/\n/g, originalLineEnding);
             }
-            
-            if (endLineIdx === -1) {
-                console.warn(`search_replace: end_line_content not found after start line in file ${filePath}`);
-                return;
-            }
-            
-            // Generate afterText by replacing lines from startLineIdx to endLineIdx
-            const linesBefore = lines.slice(0, startLineIdx);
-            const newLines = newString.split('\n');
-            const linesAfter = lines.slice(endLineIdx + 1);
-            const afterText = [...linesBefore, ...newLines, ...linesAfter].join('\n');
 
             // Generate session ID and store it
             const sessionId = String(Date.now());
