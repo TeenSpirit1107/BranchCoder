@@ -211,7 +211,7 @@ class ParallelTaskExecutorTool(MCPTool):
         # Wait for all subtasks to complete and collect results
         results = await asyncio.gather(*subtask_tasks)
         
-        # Generate summary
+        # Generate summary for display
         summary_lines = ["Parallel Execution Results:"]
         for res in results:
             summary_lines.append(f"--- Task {res['task_id'] + 1} ---")
@@ -221,8 +221,28 @@ class ParallelTaskExecutorTool(MCPTool):
 
         summary = "\n".join(summary_lines).strip()
         
-        # Yield final summary as a message
+        # Yield final summary as a message for UI display
         yield MessageEvent(message=summary)
+        
+        # Yield ToolResultEvent with only final reports for parent's memory
+        # This ensures parent's context only contains child reports, not intermediate tool calls/results
+        child_reports = {
+            "success": True,
+            "summary": summary,
+            "tasks": [
+                {
+                    "task_id": res['task_id'],
+                    "task": res['task'],
+                    "report": res['result']  # Only the final report
+                }
+                for res in results
+            ]
+        }
+        yield ToolResultEvent(
+            message="Parallel tasks completed",
+            tool_name="execute_parallel_tasks",
+            result=child_reports
+        )
 
     async def execute(
         self,
@@ -285,9 +305,17 @@ class ParallelTaskExecutorTool(MCPTool):
 
         summary = "\n".join(summary_lines).strip()
 
+        # Return only final reports for parent's memory
         return {
             "success": True,
             "summary": summary,
-            "tasks": results,
+            "tasks": [
+                {
+                    "task_id": res['task_id'],
+                    "task": res['task'],
+                    "report": res['result']  # Only the final report
+                }
+                for res in results
+            ],
         }
 

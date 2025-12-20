@@ -21,45 +21,47 @@ def execute_dijkstra(graph, start_node, end_node):
 
 def execute_floyd_warshall(graph, start_node, end_node):
     """Execute Floyd-Warshall algorithm and display results"""
-    # TODO: Implement the execute_floyd_warshall function
-    # 1. Print "\nUsing Floyd-Warshall Algorithm:"
-    # 2. Call floyd_warshall(graph) to get dist_matrix and get_path function
-    # 3. Call get_path(start_node, end_node) to get the path
-    # 4. Create nodes list by sorting graph.keys()
-    # 5. Create node_to_index dictionary mapping node to index
-    # 6. Get start_idx and end_idx from node_to_index
-    # 7. Get total_distance from dist_matrix[start_idx][end_idx]
-    # 8. If path is not empty:
-    #    - Call render_graph(graph, start_node, path) to display the graph with path highlighted
-    #    - Call render_path(path, {end_node: total_distance}) to display the path and distance
-    #    - Display the all-pairs shortest path distance matrix:
-    #      * Print "\nAll-Pairs Shortest Path Distance Matrix:"
-    #      * Print separator line with "="*50
-    #      * Print header row with 5 spaces, then each node number with width 6
-    #      * For each row i (node_i):
-    #        - Print node_i with width 4 and a space
-    #        - For each column j:
-    #          * If dist_matrix[i][j] == float('inf'), print "   INF"
-    #          * Else, print dist_matrix[i][j] with width 6
-    #        - Print newline
-    #      * Print separator line with "="*50
-    # 9. Else:
-    #    - Print error message: "Cannot reach node {end_node} from node {start_node}"
-    pass
+    print("\nUsing Floyd-Warshall Algorithm:")
+    dist_matrix, get_path = floyd_warshall(graph)
+    path = get_path(start_node, end_node)
+
+    nodes = sorted(graph.keys())
+    node_to_index = {node: i for i, node in enumerate(nodes)}
+    start_idx = node_to_index[start_node]
+    end_idx = node_to_index[end_node]
+    total_distance = dist_matrix[start_idx][end_idx]
+
+    if path:
+        render_graph(graph, start_node, path)
+        render_path(path, {end_node: total_distance})
+
+        print("\nAll-Pairs Shortest Path Distance Matrix:")
+        print("=" * 50)
+        header = "     " + "".join([f"{node:6}" for node in nodes])
+        print(header)
+        for i, node_i in enumerate(nodes):
+            row_str = f"{node_i:<4} "
+            for j, node_j in enumerate(nodes):
+                if dist_matrix[i][j] == float('inf'):
+                    row_str += "   INF"
+                else:
+                    row_str += f"{dist_matrix[i][j]:6}"
+            print(row_str)
+        print("=" * 50)
+    else:
+        print(f"Cannot reach node {end_node} from node {start_node}")
 
 
 def execute_greedy(graph, start_node, end_node):
     """Execute Greedy algorithm and display results"""
-    # TODO: Implement the execute_greedy function
-    # 1. Print "\nUsing Greedy Algorithm:"
-    # 2. Call greedy_shortest_path(graph, start_node, end_node) to get path and distances
-    # 3. If path is not empty:
-    #    - Call render_graph(graph, start_node, path) to display the graph with path highlighted
-    #    - Call render_path(path, distances) to display the path and distance
-    # 4. Else:
-    #    - Print error message: "Cannot reach node {end_node} from node {start_node}"
-    #    - Print note: "Note: Greedy algorithm may not find the optimal solution"
-    pass
+    print("\nUsing Greedy Algorithm:")
+    path, distances = greedy_shortest_path(graph, start_node, end_node)
+    if path:
+        render_graph(graph, start_node, path)
+        render_path(path, distances)
+    else:
+        print(f"Cannot reach node {end_node} from node {start_node}")
+        print("Note: Greedy algorithm may not find the optimal solution")
 
 
 def main():

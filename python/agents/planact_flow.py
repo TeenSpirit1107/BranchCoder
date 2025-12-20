@@ -430,7 +430,10 @@ class PlanActFlow(BaseFlow):
                         yield event
                         tool_result = event.result
                     elif isinstance(event, ReportEvent):
-                        is_report = True
+                        # Only treat as parent's report if is_parent is True or None (not False)
+                        # Child agents' reports (is_parent=False) should not cause parent to exit
+                        if event.is_parent is not False:
+                            is_report = True
                         yield event
                 
                 if tool_result is None:
@@ -566,46 +569,6 @@ class PlanActFlow(BaseFlow):
                         self.consecutive_search_replace_failures = 0
                 
                 if is_report:
-                    # Before returning, validate that if search_replace was used, linter was run after
-                    if not self._validate_search_replace_linter_sequence():
-                        # Try to auto-run linter on the last modified file
-                        last_file_path = self._get_last_search_replace_file_path()
-                        if last_file_path:
-                            logger.info(f"Report blocked: auto-running linter on {last_file_path}")
-                            event = MessageEvent(message="⚠️ Search_replace tool was used but linter was not run. Auto-running linter now...")
-                            event.is_parent = self.is_parent
-                            yield event
-                            
-                            # Auto-run linter
-                            async for event in self._auto_run_linter(last_file_path, session_id, iteration):
-                                yield event
-                            
-                            # Re-validate after auto-running linter
-                            if not self._validate_search_replace_linter_sequence():
-                                error_msg = "⚠️ Linter check failed or found errors. Please fix the errors before reporting."
-                                logger.warning(f"Report still blocked after auto-linter: {error_msg}")
-                                event = MessageEvent(message=error_msg)
-                                event.is_parent = self.is_parent
-                                yield event
-                                self.memory.messages.append({
-                                    "role": "user",
-                                    "content": error_msg
-                                })
-                                continue
-                            else:
-                                logger.info("Linter validation passed after auto-run, allowing report")
-                                # Continue to return and allow the report
-                        else:
-                            error_msg = "⚠️ Search_replace tool was used but linter was not run successfully after the last search_replace. Please run the linter tool to verify the code changes."
-                            logger.warning(f"Report blocked: {error_msg}")
-                            event = MessageEvent(message=error_msg)
-                            event.is_parent = self.is_parent
-                            yield event
-                            self.memory.messages.append({
-                                "role": "user",
-                                "content": error_msg
-                            })
-                            continue
                     return
                     
             else:

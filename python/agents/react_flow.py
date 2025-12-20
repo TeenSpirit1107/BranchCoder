@@ -192,7 +192,10 @@ class ReActFlow(BaseFlow):
                         yield event
                         tool_result = event.result
                     elif isinstance(event, ReportEvent):
-                        is_report = True
+                        # Only treat as parent's report if is_parent is True or None (not False)
+                        # Child agents' reports (is_parent=False) should not cause parent to exit
+                        if event.is_parent is not False:
+                            is_report = True
                         yield event
                 
                 # Check if tool execution returned a result (after loop completes)
@@ -204,18 +207,6 @@ class ReActFlow(BaseFlow):
                 self.memory.add_tool_result(session_id, iteration, tool_result)
                 
                 if is_report:
-                    # Before returning, validate that if search_replace was used, linter was run after
-                    if not self._validate_search_replace_linter_sequence():
-                        error_msg = "⚠️ Search_replace tool was used but linter was not run successfully after the last search_replace. Please run the linter tool to verify the code changes."
-                        logger.warning(f"Report blocked: {error_msg}")
-                        event = MessageEvent(message=error_msg)
-                        event.is_parent = self.is_parent
-                        yield event
-                        self.memory.messages.append({
-                            "role": "user",
-                            "content": error_msg
-                        })
-                        continue
                     return
                 
                 # Track search_replace tool failures

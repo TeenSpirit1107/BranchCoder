@@ -18,10 +18,27 @@ logger = Logger('lint_tool', log_to_file=False)
 class LintTool(MCPTool):
     """Tool for checking code syntax and linting issues."""
     
+    def __init__(self):
+        """Initialize the lint tool."""
+        self.workspace_dir: Optional[str] = None
+    
     @property
     def name(self) -> str:
         """Tool name."""
         return "lint_code"
+    
+    def set_workspace_dir(self, workspace_dir: str):
+        """
+        Set the workspace directory.
+        
+        Args:
+            workspace_dir: Path to workspace directory
+        """
+        if self.workspace_dir == workspace_dir:
+            return
+        
+        self.workspace_dir = workspace_dir
+        logger.info(f"Setting workspace directory for lint tool: {workspace_dir}")
     
     def get_tool_definition(self) -> Dict[str, Any]:
         """Get the tool definition for LLM function calling."""
@@ -375,8 +392,16 @@ class LintTool(MCPTool):
             try:
                 file_path_obj = Path(file_path)
                 if not file_path_obj.is_absolute():
-                    # Try to resolve relative path
-                    file_path_obj = file_path_obj.resolve()
+                    # Try to resolve relative path using workspace_dir if available
+                    if self.workspace_dir:
+                        # Resolve relative to workspace directory
+                        workspace_path = Path(self.workspace_dir)
+                        file_path_obj = (workspace_path / file_path).resolve()
+                        logger.debug(f"Resolved relative path '{file_path}' to '{file_path_obj}' using workspace_dir '{self.workspace_dir}'")
+                    else:
+                        # Fall back to current working directory
+                        file_path_obj = file_path_obj.resolve()
+                        logger.debug(f"Resolved relative path '{file_path}' to '{file_path_obj}' using current working directory")
                 
                 if not file_path_obj.exists():
                     return {
