@@ -19,13 +19,7 @@ def dijkstra(graph, start, end):
     Returns:
     (path, distances): path list and distance dictionary
     """
-    # TODO: Implement the dijkstra function
-    # 1) Initialize distances (start=0, others=inf) and previous (for reconstructing path)
-    # 2) Use a priority queue (min-heap) to repeatedly pick the node with smallest known distance
-    # 3) Relax edges for each neighbor: if a shorter path is found, update distances/previous and push into heap
-    # 4) Early exit if end is popped (optional optimization)
-    # 5) Reconstruct path from end via previous; if end unreachable, return empty path
-    # Return (path, distances)
+    
     distances = {node: float('inf') for node in graph}
     distances[start] = 0
     previous = {}

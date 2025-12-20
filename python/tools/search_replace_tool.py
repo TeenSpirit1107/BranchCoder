@@ -5,6 +5,7 @@ Search Replace Tool - Performs exact string replacements in files
 
 import os
 import asyncio
+import re
 from pathlib import Path
 from typing import Dict, Any, Optional
 from utils.logger import Logger
@@ -116,6 +117,36 @@ class SearchReplaceTool(MCPTool):
         # Replace \r\n with \n first, then replace remaining \r with \n
         return text.replace('\r\n', '\n').replace('\r', '\n')
     
+    def _decode_unicode_escapes(self, text: str) -> str:
+        """
+        Decode Unicode escape sequences in a string.
+        Converts sequences like \\u2514 to actual Unicode characters.
+        
+        This handles cases where the search string contains Unicode escape sequences
+        (like \\u2514\\u2500) but the file contains the actual characters (like └─).
+        
+        Args:
+            text: Text that may contain Unicode escape sequences
+        
+        Returns:
+            Text with Unicode escape sequences decoded to actual characters
+        """
+        def decode_match(match):
+            """Decode a single Unicode escape sequence."""
+            code_point = int(match.group(1), 16)
+            return chr(code_point)
+        
+        # Match \uXXXX patterns (4 hex digits)
+        # Pattern: literal backslash followed by u and exactly 4 hexadecimal digits
+        # Need to escape backslash in the pattern: \\\\u matches literal \u in the string
+        pattern = r'\\u([0-9a-fA-F]{4})'
+        # But since Python interprets \u in strings, we need to use a different approach
+        # We'll match the literal characters: backslash + u + 4 hex digits
+        # In a raw string r'\\u' means literal backslash-u, but we need to be careful
+        # Actually, we want to match a backslash character followed by 'u' and 4 hex digits
+        # So we use: r'\\u' which in regex matches literal backslash-u
+        return re.sub(pattern, decode_match, text)
+    
     def _format_string_for_log(self, text: str, max_length: int = 500) -> str:
         """
         Format a string for logging purposes.
@@ -140,11 +171,11 @@ class SearchReplaceTool(MCPTool):
     def _find_all_matches(self, content: str, old_string: str) -> list:
         """
         Find all occurrences of old_string in content.
-        Normalizes line endings before matching to handle cross-platform differences.
+        Normalizes line endings and decodes Unicode escape sequences before matching.
         
         Args:
             content: File content
-            old_string: String to find
+            old_string: String to find (may contain Unicode escape sequences like \\u2514)
         
         Returns:
             List of (start_index, end_index) tuples
@@ -153,16 +184,31 @@ class SearchReplaceTool(MCPTool):
         normalized_content = self._normalize_line_endings(content)
         normalized_old_string = self._normalize_line_endings(old_string)
         
-        # Find all exact matches
+        # Decode Unicode escape sequences in old_string (e.g., \\u2514 -> └)
+        # This handles cases where the search string uses escape sequences but
+        # the file contains actual Unicode characters
+        decoded_old_string = self._decode_unicode_escapes(normalized_old_string)
+        
+        # Try to find matches with the decoded string first
         matches = []
         start = 0
         
         while True:
-            index = normalized_content.find(normalized_old_string, start)
+            index = normalized_content.find(decoded_old_string, start)
             if index == -1:
                 break
-            matches.append((index, index + len(normalized_old_string)))
+            matches.append((index, index + len(decoded_old_string)))
             start = index + 1
+        
+        # If no matches found with decoded string, try with original (for backward compatibility)
+        if not matches and decoded_old_string != normalized_old_string:
+            start = 0
+            while True:
+                index = normalized_content.find(normalized_old_string, start)
+                if index == -1:
+                    break
+                matches.append((index, index + len(normalized_old_string)))
+                start = index + 1
         
         return matches
     
@@ -272,6 +318,10 @@ class SearchReplaceTool(MCPTool):
                 matches = self._find_all_matches(normalized_content, normalized_old_string)
                 
                 if not matches:
+                    # Decode Unicode escapes for better error reporting
+                    decoded_old_string = self._decode_unicode_escapes(normalized_old_string)
+                    has_unicode_escapes = decoded_old_string != normalized_old_string
+                    
                     logger.error(f"old_string not found in file")
                     # Log full file content for debugging if VERBOSE is enabled
                     if VERBOSE:
@@ -282,12 +332,29 @@ class SearchReplaceTool(MCPTool):
                         logger.error(f"Searching for old_string (length {len(old_string)}):")
                         logger.error("=" * 80)
                         logger.error(repr(old_string))
+                        if has_unicode_escapes:
+                            logger.error(f"Decoded Unicode escapes (length {len(decoded_old_string)}):")
+                            logger.error(repr(decoded_old_string))
                         logger.error("=" * 80)
+                    
+                    # Provide more helpful error message
+                    error_msg = "old_string not found in file"
+                    suggestion = "Please check if old_string is correct and ensure it matches exactly (including whitespace, indentation, etc.)"
+                    
+                    if has_unicode_escapes:
+                        # Check if decoded version exists in file
+                        if decoded_old_string in normalized_content:
+                            error_msg += " (but decoded Unicode version found - this may indicate an encoding issue)"
+                            suggestion = "The search string contains Unicode escape sequences (\\uXXXX) that were decoded, but the original string wasn't found. Try using the actual Unicode characters instead of escape sequences."
+                        else:
+                            suggestion = "The search string contains Unicode escape sequences (\\uXXXX). Ensure the file contains the actual Unicode characters that match the decoded escape sequences."
+                    
                     return {
                         "success": False,
-                        "error": f"old_string not found in file",
+                        "error": error_msg,
                         "file_path": str(resolved_path),
-                        "suggestion": "Please check if old_string is correct and ensure it matches exactly (including whitespace, indentation, etc.)"
+                        "suggestion": suggestion,
+                        "has_unicode_escapes": has_unicode_escapes
                     }
                 
                 # Check uniqueness if replace_all is False

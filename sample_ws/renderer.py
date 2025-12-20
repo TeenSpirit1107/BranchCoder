@@ -13,48 +13,63 @@ def render_graph(graph, start_node=None, path=None):
     start_node: starting node (optional)
     path: path list (optional), used to highlight the path
     """
-    # TODO: Implement the render_graph function
     # Part 1: Print graph structure
-    #   1. Print separator line with "="*50 and newline
-    #   2. Print "Graph Structure:" header
-    #   3. Print another separator line
-    #   4. For each node in sorted(graph.keys()):
-    #      - Create node_label = f"Node {node}"
-    #      - If start_node is not None and node == start_node, append " [Start]" to node_label
-    #      - If path exists and node is in path, append " [Path]" to node_label
-    #      - Print node_label with newline before it
-    #      - If graph[node] is empty, print "  └─> (no outgoing edges)"
-    #      - Else, for each edge (target, weight) in graph[node]:
-    #        * Determine if it's the last edge: is_last = (i == len(graph[node]) - 1)
-    #        * Set prefix = "  └─>" if is_last, else "  ├─>"
-    #        * Create target_label = f"Node {target}"
-    #        * If path exists and target is in path, append " [Path]" to target_label
-    #        * Print "{prefix} {target_label} (weight: {weight})"
-    #   5. Print separator line with "="*50 and newline
-    #
+    print("=" * 50)
+    print("Graph Structure:")
+    print("=" * 50)
+
+    path_nodes = set(path) if path else set()
+
+    for node in sorted(graph.keys()):
+        node_label = f"Node {node}"
+        if start_node is not None and node == start_node:
+            node_label += " [Start]"
+        if node in path_nodes:
+            node_label += " [Path]"
+        print(f"\n{node_label}")
+
+        if not graph.get(node):
+            print("  └─> (no outgoing edges)")
+        else:
+            for i, (target, weight) in enumerate(graph[node]):
+                is_last = (i == len(graph[node]) - 1)
+                prefix = "  └─>" if is_last else "  ├─>"
+                target_label = f"Node {target}"
+                if target in path_nodes:
+                    target_label += " [Path]"
+                print(f"{prefix} {target_label} (weight: {weight})")
+    print("=" * 50)
+
     # Part 2: Print adjacency matrix representation
-    #   1. Print "\nAdjacency Matrix Representation:"
-    #   2. Print separator line with "="*50
-    #   3. Create nodes = sorted(graph.keys()) and n = len(nodes)
-    #   4. Print header row:
-    #      - Print 5 spaces with end=""
-    #      - For each node, print node number with right alignment and width 4
-    #      - Print newline
-    #   5. Print matrix rows:
-    #      - For each node i in nodes:
-    #        * Print i with right alignment, width 4, and a space, with end=""
-    #        * For each node j in nodes:
-    #          - Check if there's an edge from i to j:
-    #            * Initialize weight = None
-    #            * Iterate through graph.get(i, []) to find edge to j
-    #            * If found, set weight = w and break
-    #          - If weight is not None, print weight with right alignment and width 4
-    #          - Else:
-    #            * If i == j, print 0 with right alignment and width 4
-    #            * Else, print '-' with right alignment and width 4
-    #        * Print newline after each row
-    #   6. Print separator line with "="*50 and newline
-    pass
+    print("\nAdjacency Matrix Representation:")
+    print("=" * 50)
+
+    nodes = sorted(graph.keys())
+    n = len(nodes)
+
+    # Header row
+    print("     ", end="")
+    for node in nodes:
+        print(f"{node:4}", end="")
+    print()
+
+    # Matrix rows
+    for i in nodes:
+        print(f"{i:4} ", end="")
+        for j in nodes:
+            weight = None
+            for target, w in graph.get(i, []):
+                if target == j:
+                    weight = w
+                    break
+            if weight is not None:
+                print(f"{weight:4}", end="")
+            elif i == j:
+                print(f"{0:4}", end="")
+            else:
+                print(f"{'-':4}", end="")
+        print()
+    print("=" * 50)
 
 
 def render_path(path, distances=None):
@@ -65,17 +80,20 @@ def render_path(path, distances=None):
     path: path list
     distances: distance dictionary (optional)
     """
-    # TODO: Implement the render_path function
-    # If path is empty, print "No path found" and return
-    # Otherwise:
-    #   1. Print a separator line with "="*50
-    #   2. Print "Shortest Path:" header
-    #   3. Print another separator line
-    #   4. Create a path string by joining nodes with " -> " (format: "Node 0 -> Node 1 -> ...")
-    #   5. Print the path string with "Path: " prefix
-    #   6. If distances dictionary is provided and path is not empty:
-    #      - Get the total distance using distances.get(path[-1], "Unknown")
-    #      - Print "Total Distance: {total_distance}"
-    #   7. Print a final separator line with "="*50 and a newline
-    pass
+    if not path:
+        print("No path found")
+        return
+
+    print("=" * 50)
+    print("Shortest Path:")
+    print("=" * 50)
+
+    path_str = " -> ".join([f"Node {node}" for node in path])
+    print(f"Path: {path_str}")
+
+    if distances and path:
+        total_distance = distances.get(path[-1], "Unknown")
+        print(f"Total Distance: {total_distance}")
+
+    print("=" * 50 + "\n")
 

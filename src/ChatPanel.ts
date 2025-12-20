@@ -1012,7 +1012,8 @@ export class ChatPanel {
                             contentHtml = '<strong>Error:</strong> ' + renderMarkdown(evt.message || '');
                         } else {
                             if (evt.type === 'notification_message') {
-                                contentHtml = '<em>' + (evt.message || 'Thinking...') + '</em>';
+                                // Make notification messages more visible
+                                contentHtml = '<div class="notification-message">' + renderMarkdown(evt.message || 'Thinking...') + '</div>';
                             } else {
                                 contentHtml = renderMarkdown(evt.message || '');
                             }

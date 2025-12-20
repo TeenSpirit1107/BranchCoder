@@ -167,6 +167,9 @@ class ReActFlow(BaseFlow):
                     tool_args.setdefault("parent_information", parent_information)
                     tool_args.setdefault("parent_session_id", session_id)
                     tool_args.setdefault("parent_flow_type", "react")
+                    # Pass parent open files for file context inheritance
+                    parent_open_files = self.memory.file_context_manager.get_open_files()
+                    tool_args.setdefault("parent_open_files", parent_open_files)
 
                 logger.info(f"Tool call: {tool_name} with args: {tool_args}")
 
@@ -192,9 +195,13 @@ class ReActFlow(BaseFlow):
                         yield event
                         tool_result = event.result
                     elif isinstance(event, ReportEvent):
-                        # Only treat as parent's report if is_parent is True or None (not False)
-                        # Child agents' reports (is_parent=False) should not cause parent to exit
-                        if event.is_parent is not False:
+                        # For child agents: any ReportEvent should end the agent
+                        # For parent agents: only ReportEvent from parent (is_parent is not False) should end
+                        if not self.is_parent:
+                            # Child agent: end immediately when send_report is called
+                            is_report = True
+                        elif event.is_parent is not False:
+                            # Parent agent: only end if report is from parent (not from child)
                             is_report = True
                         yield event
                 
@@ -205,6 +212,9 @@ class ReActFlow(BaseFlow):
                 # Add tool call and result to memory (only once, after loop completes)
                 self.memory.add_tool_call(session_id, iteration, tool_name, tool_args)
                 self.memory.add_tool_result(session_id, iteration, tool_result)
+                
+                # Close temporary files after each iteration
+                self.memory.close_temporary_files()
                 
                 if is_report:
                     return

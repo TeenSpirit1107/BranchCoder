@@ -20,8 +20,8 @@ class MessageTool(MCPTool):
     
     @property
     def agent_tool(self) -> bool:
-        """This tool should be exposed to LLM agent for sending messages."""
-        return True
+        """This tool should not be exposed to LLM agent - use message_to_user parameter instead."""
+        return False
     
     def get_tool_definition(self) -> Dict[str, Any]:
         """Get the tool definition for LLM function calling."""

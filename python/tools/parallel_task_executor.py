@@ -85,7 +85,8 @@ class ParallelTaskExecutorTool(MCPTool):
         parent_session_id: Optional[str] = None,
         context_messages: Optional[List[Dict[str, Any]]] = None,
         parent_flow_type: Optional[str] = None,
-        parent_information: Optional[str] = None
+        parent_information: Optional[str] = None,
+        parent_open_files: Optional[List[str]] = None
     ) -> AsyncGenerator[BaseEvent, None]:
         """
         Execute tasks in parallel and yield all events from subtasks.
@@ -113,6 +114,11 @@ class ParallelTaskExecutorTool(MCPTool):
                     # Default to ReActFlow (for "react", "ReActFlow", or None)
                     from agents.react_flow import ReActFlow
                     agent = ReActFlow(self.workspace_dir or "", is_parent=False)
+                
+                # Open files inherited from parent
+                if parent_open_files:
+                    agent.memory.open_files(parent_open_files, mode="persistent")
+                
                 async for event in agent.process(
                     task_description,
                     sub_session_id,
@@ -250,7 +256,8 @@ class ParallelTaskExecutorTool(MCPTool):
         parent_session_id: Optional[str] = None,
         context_messages: Optional[List[Dict[str, Any]]] = None,
         parent_flow_type: Optional[str] = None,
-        parent_information: Optional[str] = None
+        parent_information: Optional[str] = None,
+        parent_open_files: Optional[List[str]] = None
     ) -> Dict[str, Any]:
         if not tasks:
             return {
@@ -273,6 +280,11 @@ class ParallelTaskExecutorTool(MCPTool):
                     # Default to ReActFlow (for "react", "ReActFlow", or None)
                     from agents.react_flow import ReActFlow
                     agent = ReActFlow(self.workspace_dir or "", is_parent=False)
+                
+                # Open files inherited from parent
+                if parent_open_files:
+                    agent.memory.open_files(parent_open_files, mode="persistent")
+                
                 async for event in agent.process(
                     task_description,
                     sub_session_id,

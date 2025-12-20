@@ -139,7 +139,23 @@ def get_tool_definitions(is_parent: bool = True) -> List[Dict[str, Any]]:
             logger.debug("Excluding execute_parallel_tasks tool for child agent")
             continue
         
-        tools.append(tool.get_tool_definition())
+        tool_def = tool.get_tool_definition()
+        
+        # Add message_to_user parameter to all tools
+        if "function" in tool_def and "parameters" in tool_def["function"]:
+            params = tool_def["function"]["parameters"]
+            if "properties" not in params:
+                params["properties"] = {}
+            if "message_to_user" not in params["properties"]:
+                params["properties"]["message_to_user"] = {
+                    "type": "string",
+                    "description": "Optional message to display to the user when this tool is called. Use this to provide progress updates, explanations, or any information the user should see."
+                }
+            # Ensure message_to_user is not in required list
+            if "required" in params:
+                params["required"] = [r for r in params["required"] if r != "message_to_user"]
+        
+        tools.append(tool_def)
     
     return tools
 
@@ -162,7 +178,8 @@ def set_workspace_dir(workspace_dir: str) -> None:
 
 async def execute_tool(tool_call_event: ToolCallEvent) -> AsyncGenerator[BaseEvent, None]:
     tool_name = tool_call_event.tool_name
-    tool_args = tool_call_event.tool_args or {}
+    # Create a copy of tool_args to avoid modifying the original
+    tool_args = dict(tool_call_event.tool_args) if tool_call_event.tool_args else {}
 
     tool = get_tool(tool_name)
     if tool is None:
@@ -174,6 +191,12 @@ async def execute_tool(tool_call_event: ToolCallEvent) -> AsyncGenerator[BaseEve
             result={"error": error_msg}
         )
         return
+
+    # Check for message_to_user parameter and yield MessageEvent if present
+    message_to_user = tool_args.pop("message_to_user", None)
+    if message_to_user:
+        from models import MessageEvent
+        yield MessageEvent(message=message_to_user)
 
     call_notification = tool.get_call_notification(tool_args)
     if call_notification:
@@ -195,7 +218,21 @@ async def execute_tool(tool_call_event: ToolCallEvent) -> AsyncGenerator[BaseEve
         
         if tool_name == "send_report":
             message = result.get("message", "")
-            yield ReportEvent(message=message)
+            # Create ReportEvent with is_parent and agent_index from tool_call_event
+            report_event = ReportEvent(
+                message=message,
+                is_parent=tool_call_event.is_parent,
+                agent_index=tool_call_event.agent_index
+            )
+            yield report_event
+            # Also yield ToolResultEvent for memory tracking
+            yield ToolResultEvent(
+                message=f'Report sent',
+                tool_name=tool_name,
+                result=result,
+                is_parent=tool_call_event.is_parent,
+                agent_index=tool_call_event.agent_index
+            )
             return
         
         if tool_name == "send_message":

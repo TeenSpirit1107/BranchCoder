@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 from utils.logger import Logger
 from tools.tool_factory import execute_tool
+from tools.file_context_manager import get_file_context_manager
 from models import ToolResultEvent, ToolCallEvent
 from prompts.flow_prompt import get_system_prompt
 
@@ -24,6 +25,13 @@ class Memory:
         self._histories: Dict[str, List[Dict[str, Any]]] = {}
         self._load_all_histories()
         self.messages: List[Dict[str, Any]] = []
+        # Initialize file context manager
+        self.file_context_manager = get_file_context_manager(workspace_dir)
+        # Store parent_information and task for child agents (for regenerating system prompt)
+        self._parent_information: Optional[str] = None
+        self._task: Optional[str] = None
+        # Store workspace_structure to avoid reloading it every time
+        self._workspace_structure: str = ""
     
     def _ensure_history_dir(self) -> None:
         try:
@@ -102,11 +110,21 @@ class Memory:
             if isinstance(event, ToolResultEvent):
                 workspace_structure = event.result
         
+        # Store workspace_structure for later use
+        self._workspace_structure = workspace_structure
+        
         system_prompt = get_system_prompt(is_parent=self.is_parent)
+        
+        # Get file context (dynamically loaded file contents)
+        file_context = self.file_context_manager.format_files_for_prompt()
+        if not file_context:
+            file_context = ""  # Empty string if no files are open
+        
         format_args = {
             "current_time": current_time,
             "workspace_dir": self.workspace_dir,
-            "workspace_structure": workspace_structure
+            "workspace_structure": workspace_structure,
+            "file_context": file_context
         }
         
         # Add parent_information and task for child agents
@@ -116,7 +134,32 @@ class Memory:
         
         return system_prompt.format(**format_args)
     
+    def close_temporary_files(self) -> None:
+        """Close all temporary files after an iteration."""
+        self.file_context_manager.close_temporary_files()
+    
+    def inherit_file_context(self, parent_memory: 'Memory') -> None:
+        """Inherit file context from parent memory."""
+        self.file_context_manager.inherit_from(parent_memory.file_context_manager)
+    
+    def open_files(self, file_paths: List[str], mode: str = "persistent") -> None:
+        """
+        Open files for context inclusion.
+        
+        Args:
+            file_paths: List of file paths to open
+            mode: "persistent" or "temporary"
+        """
+        from tools.file_context_manager import FileOpenMode
+        open_mode = FileOpenMode.PERSISTENT if mode == "persistent" else FileOpenMode.TEMPORARY
+        for file_path in file_paths:
+            self.file_context_manager.open_file(file_path, open_mode)
+    
     async def initialize_messages(self, session_id: str, parent_information: Optional[str] = None, task: Optional[str] = None) -> List[Dict[str, Any]]:
+        # Store parent_information and task for later use in get_messages
+        self._parent_information = parent_information
+        self._task = task
+        
         system_prompt = await self.generate_system_prompt(parent_information=parent_information, task=task)
         session_history = self.get_history(session_id)
         self.messages = [
@@ -161,4 +204,41 @@ class Memory:
         self._add_history_entry(session_id, tool_result_message)
     
     def get_messages(self) -> List[Dict[str, Any]]:
-        return self.messages
+        """
+        Get messages for LLM, with dynamically updated system prompt.
+        System prompt is regenerated each time to include latest file context.
+        """
+        # Regenerate system prompt with latest file context (synchronous version)
+        from datetime import datetime
+        from prompts.flow_prompt import get_system_prompt
+        
+        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        system_prompt = get_system_prompt(is_parent=self.is_parent)
+        
+        # Get latest file context
+        file_context = self.file_context_manager.format_files_for_prompt()
+        if not file_context:
+            file_context = ""
+        
+        format_args = {
+            "current_time": current_time,
+            "workspace_dir": self.workspace_dir,
+            "workspace_structure": self._workspace_structure,  # Use stored workspace structure
+            "file_context": file_context
+        }
+        
+        # For child agents, use stored parent_information and task
+        if not self.is_parent:
+            format_args["parent_information"] = self._parent_information or "No additional context provided."
+            format_args["task"] = self._task or "Complete the assigned task."
+        
+        updated_system = system_prompt.format(**format_args)
+        
+        # Update system message in messages
+        messages = self.messages.copy()
+        if messages and messages[0].get("role") == "system":
+            messages[0] = {"role": "system", "content": updated_system}
+        else:
+            messages.insert(0, {"role": "system", "content": updated_system})
+        
+        return messages
